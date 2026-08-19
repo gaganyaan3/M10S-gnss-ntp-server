@@ -9,21 +9,57 @@
 struct GpsDashboardSettings {
   bool rawLoggingEnabled = false;
   bool ntpHoldoverEnabled = true;
+  bool enableStats = true;
   bool displayEnabled = true;
 };
 
 struct GpsDashboardStatus {
+  static constexpr size_t MAX_NAV_SAT_DETAILS = 48;
+
+  struct NavSatDetail {
+    uint8_t constellation = 0;
+    uint16_t prn = 0;
+    int16_t elevationDeg = 0;
+    int16_t azimuthDeg = 0;
+    int16_t cn0DbHz = -1;
+  };
+
   bool satelliteCountValid = false;
   uint32_t satelliteCount = 0;
   bool seenSatelliteSinceBoot = false;
   bool gpsTimeValid = false;
   uint32_t gpsEpochUtc = 0;
+  bool navPvtValid = false;
+  bool latitudeValid = false;
+  double latitude = 0.0;
+  bool longitudeValid = false;
+  double longitude = 0.0;
+  bool altitudeValid = false;
+  double altitudeMeters = 0.0;
+  bool speedValid = false;
+  double speedMps = 0.0;
+  bool hdopValid = false;
+  double hdop = 0.0;
+  bool pdopValid = false;
+  double pdop = 0.0;
+  bool vdopValid = false;
+  double vdop = 0.0;
+  bool navSatValid = false;
+  uint16_t gpsSatCount = 0;
+  uint16_t galileoSatCount = 0;
+  uint16_t beidouSatCount = 0;
+  uint16_t glonassSatCount = 0;
+  uint16_t qzssSatCount = 0;
+  uint16_t sbasSatCount = 0;
+  uint16_t otherSatCount = 0;
+  size_t navSatDetailCount = 0;
+  NavSatDetail navSatDetails[MAX_NAV_SAT_DETAILS];
   String gpsUartLabel;
   String ppsPinLabel;
   uint32_t gpsBaudRate = 9600;
   uint16_t nmeaPort = 0;
-  uint16_t ntpPort = 0;
-};
+  uint16_t ntpPort = 0;  float cpuUtilizationPercent = 0.0f;
+  float internalTemperatureC = 0.0f;};
 
 // Captive-portal Wi-Fi provisioning for ESP32.
 // On first boot (no saved credentials) the device starts an open hotspot named
@@ -101,12 +137,14 @@ class WiFiSetupPortal {
   void handleConnectSuccess();
   void handleConnectFailed();
   void handleGpsDashboard();
+  void handleStats();
   void handleGpsSave();
   void handleNotFound();
   bool connectToWiFi(const String& ssid, const String& password, const char* source = nullptr);
   void stopAccessPoint();
   String htmlPage() const;
   String gpsDashboardPage(const GpsDashboardSettings& settings, const GpsDashboardStatus& status) const;
+  String statsPage(const GpsDashboardStatus& status) const;
 
   WebServer server_;
   DNSServer dnsServer_;

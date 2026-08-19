@@ -6,6 +6,7 @@
 #include <esp_system.h>
 #include <time.h>
 #include <sys/time.h>
+#include <algorithm>
 
 #include "GnssMaxM10S.h"
 #include "NmeaServer.h"
@@ -48,6 +49,7 @@ struct StoredGpsDashboardConfig {
   uint32_t magic;
   uint8_t rawLoggingEnabled;
   uint8_t ntpHoldoverEnabled;
+  uint8_t enableStatsEnabled;
   uint8_t reserved[10];
 };
 
@@ -74,6 +76,10 @@ unsigned long ntpHoldoverSetAtMs = 0;
 bool holdoverClockValid = false;
 uint32_t holdoverBaseEpochUtc = 0;
 unsigned long holdoverSetAtMs = 0;
+float currentCpuUtilizationPercent = 0.0f;
+float currentInternalTemperatureC = 0.0f;
+uint64_t cpuUtilWindowStartUs = 0;
+uint64_t cpuUtilBusyUs = 0;
 
 IRAM_ATTR void onPpsInterrupt() {
   const uint32_t nowMicros = micros();
@@ -116,15 +122,18 @@ void loadGpsDashboardSettings() {
   if (stored.magic != GNSS_DASHBOARD_CONFIG_MAGIC) {
     gpsDashboardSettings.rawLoggingEnabled = false;
     gpsDashboardSettings.ntpHoldoverEnabled = true;
+    gpsDashboardSettings.enableStats = true;
     return;
   }
 
   gpsDashboardSettings.rawLoggingEnabled = stored.rawLoggingEnabled != 0;
   gpsDashboardSettings.ntpHoldoverEnabled = stored.ntpHoldoverEnabled != 0;
+  gpsDashboardSettings.enableStats = stored.enableStatsEnabled != 0;
 }
 
 void applyGpsDashboardSettings() {
   gps.enableRawLogging(gpsDashboardSettings.rawLoggingEnabled);
+  gps.enableStats(gpsDashboardSettings.enableStats);
 }
 
 bool saveGpsDashboardSettings(const GpsDashboardSettings& settings) {
@@ -132,6 +141,7 @@ bool saveGpsDashboardSettings(const GpsDashboardSettings& settings) {
   stored.magic = GNSS_DASHBOARD_CONFIG_MAGIC;
   stored.rawLoggingEnabled = settings.rawLoggingEnabled ? 1 : 0;
   stored.ntpHoldoverEnabled = settings.ntpHoldoverEnabled ? 1 : 0;
+  stored.enableStatsEnabled = settings.enableStats ? 1 : 0;
 
   EEPROM.begin(WiFiSetupPortal::EEPROM_BYTES);
   EEPROM.put(WiFiSetupPortal::GNSS_CONFIG_ADDR, stored);
@@ -196,6 +206,75 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
   statusOut.gpsBaudRate = 9600;
   statusOut.nmeaPort = NmeaServer::DEFAULT_PORT;
   statusOut.ntpPort = NtpServer::DEFAULT_PORT;
+  statusOut.cpuUtilizationPercent = currentCpuUtilizationPercent;
+  statusOut.internalTemperatureC = currentInternalTemperatureC;
+
+  if (!settingsOut.enableStats) {
+    // Skip stats-only fields so /stats-related work stays off when disabled.
+    return;
+  }
+
+  statusOut.latitudeValid = gps.hasLocation();
+  if (statusOut.latitudeValid) {
+    statusOut.latitude = gps.latitude();
+  }
+
+  statusOut.longitudeValid = gps.hasLocation();
+  if (statusOut.longitudeValid) {
+    statusOut.longitude = gps.longitude();
+  }
+
+  statusOut.altitudeValid = gps.hasAltitude();
+  if (statusOut.altitudeValid) {
+    statusOut.altitudeMeters = gps.altitudeMeters();
+  }
+
+  statusOut.speedValid = gps.hasSpeed();
+  if (statusOut.speedValid) {
+    statusOut.speedMps = gps.speedMps();
+  }
+
+  statusOut.hdopValid = gps.hasHdop();
+  if (statusOut.hdopValid) {
+    statusOut.hdop = gps.hdop();
+  }
+
+  statusOut.pdopValid = gps.hasPdop();
+  if (statusOut.pdopValid) {
+    statusOut.pdop = gps.pdop();
+  }
+
+  statusOut.vdopValid = gps.hasVdop();
+  if (statusOut.vdopValid) {
+    statusOut.vdop = gps.vdop();
+  }
+
+  statusOut.navPvtValid = statusOut.latitudeValid &&
+                          statusOut.longitudeValid &&
+                          statusOut.altitudeValid &&
+                          statusOut.speedValid;
+
+  GnssNavSatSnapshot navSat;
+  gps.navSatSnapshot(navSat);
+  statusOut.navSatValid = navSat.valid;
+  statusOut.gpsSatCount = navSat.gpsCount;
+  statusOut.galileoSatCount = navSat.galileoCount;
+  statusOut.beidouSatCount = navSat.beidouCount;
+  statusOut.glonassSatCount = navSat.glonassCount;
+  statusOut.qzssSatCount = navSat.qzssCount;
+  statusOut.sbasSatCount = navSat.sbasCount;
+  statusOut.otherSatCount = navSat.otherCount;
+  statusOut.navSatDetailCount =
+      navSat.satelliteCount < GpsDashboardStatus::MAX_NAV_SAT_DETAILS
+          ? navSat.satelliteCount
+          : GpsDashboardStatus::MAX_NAV_SAT_DETAILS;
+  for (size_t i = 0; i < statusOut.navSatDetailCount; ++i) {
+    statusOut.navSatDetails[i].constellation = navSat.satellites[i].constellation;
+    statusOut.navSatDetails[i].prn = navSat.satellites[i].prn;
+    statusOut.navSatDetails[i].elevationDeg = navSat.satellites[i].elevationDeg;
+    statusOut.navSatDetails[i].azimuthDeg = navSat.satellites[i].azimuthDeg;
+    statusOut.navSatDetails[i].cn0DbHz = navSat.satellites[i].cn0DbHz;
+  }
 }
 
 void handleDisplayToggleButton(unsigned long nowMs) {
@@ -290,30 +369,30 @@ bool getNtpUtcEpoch(uint32_t& epochUtcOut) {
   return true;
 }
 
-bool getNtpUtcEpochUs(uint64_t& epochUsOut) {
-  timeval tv;
-  gettimeofday(&tv, nullptr);
-  if (tv.tv_sec < 1700000000) {
-    return false;
+float readEspTemperatureC() {
+  const float reading = temperatureRead();
+  if (reading < -40.0f || reading > 120.0f) {
+    return 0.0f;
   }
-  epochUsOut = static_cast<uint64_t>(tv.tv_sec) * 1000000ULL + static_cast<uint64_t>(tv.tv_usec);
-  return true;
+  return reading;
 }
 
-// Renders the diff at the smallest unit (ms/us/ns) needed to show a non-zero
-// magnitude, since GNSS/NTP can agree down to the millisecond level.
-void formatDiffLabel(char* out, size_t outLen, bool diffValid, int64_t diffUs) {
-  if (!diffValid) {
-    snprintf(out, outLen, "df:--");
-    return;
+void updateCpuUtilization(uint64_t loopBusyUs) {
+  if (cpuUtilWindowStartUs == 0) {
+    cpuUtilWindowStartUs = micros();
   }
-  const int64_t absUs = diffUs < 0 ? -diffUs : diffUs;
-  if (absUs >= 1000) {
-    snprintf(out, outLen, "df:%ldms", static_cast<long>(diffUs / 1000));
-  } else if (absUs > 0) {
-    snprintf(out, outLen, "df:%ldus", static_cast<long>(diffUs));
-  } else {
-    snprintf(out, outLen, "df:%ldns", static_cast<long>(diffUs * 1000));
+
+  cpuUtilBusyUs += loopBusyUs;
+  const uint64_t elapsedUs = micros() - cpuUtilWindowStartUs;
+  if (elapsedUs >= 1000000ULL) {
+    const float busyRatio = static_cast<float>(cpuUtilBusyUs) / static_cast<float>(elapsedUs);
+    currentCpuUtilizationPercent = busyRatio * 100.0f;
+    if (currentCpuUtilizationPercent > 100.0f) {
+      currentCpuUtilizationPercent = 100.0f;
+    }
+    currentInternalTemperatureC = readEspTemperatureC();
+    cpuUtilBusyUs = 0;
+    cpuUtilWindowStartUs = micros();
   }
 }
 
@@ -411,6 +490,8 @@ void setup() {
   }
 
   gps.begin();
+  // Enable UBX frame hex dump to Serial for diagnosis (temporary)
+  gps.enableUbxLogging(true);
   applyGpsDashboardSettings();
   nmeaServer.setLineTransformer([](const String& line) { return applyPpsTimeToNmeaLine(line); });
   gps.onRawLine([](const String& line) { nmeaServer.broadcastLine(line); });
@@ -436,6 +517,7 @@ void setup() {
 }
 
 void loop() {
+  const uint64_t loopStartUs = micros();
   const unsigned long nowMs = millis();
   handleDisplayToggleButton(nowMs);
 
@@ -512,9 +594,6 @@ void loop() {
   char ntpDateLine[16];
   char statusLine[64];
   char hdopText[8];
-  char diffLabel[24];
-  bool diffValid = false;
-  int64_t diffUs = 0;
 
   uint32_t satCount = 0;
   float hdopValue = 0.0f;
@@ -556,20 +635,6 @@ void loop() {
     }
   }
 
-  uint64_t gpsEpochMs = 0;
-  bool gpsMsValid = false;
-  if (gpsHasFix) {
-    gpsMsValid = gps.currentUtcEpochMsPps(gpsEpochMs);
-    if (!gpsMsValid) {
-      gpsMsValid = gps.currentUtcEpochMs(gpsEpochMs);
-    }
-  }
-  uint64_t ntpEpochUs = 0;
-  const bool ntpUsValid = getNtpUtcEpochUs(ntpEpochUs);
-  diffValid = gpsMsValid && ntpUsValid;
-  diffUs = diffValid ? static_cast<int64_t>(ntpEpochUs) - static_cast<int64_t>(gpsEpochMs) * 1000 : 0;
-  formatDiffLabel(diffLabel, sizeof(diffLabel), diffValid, diffUs);
-
   if (gpsStamp.valid) {
     formatIstTimeFromEpoch(gpsStamp.epochUtc, gpsLine, sizeof(gpsLine));
     formatIstTimeOnlyFromEpoch(gpsStamp.epochUtc, gpsTimeLine, sizeof(gpsTimeLine));
@@ -584,11 +649,10 @@ void loop() {
       Serial.println("GNSS fix acquired");
     }
     Serial.printf(
-        "GNSS time IST: %s | sats: %lu | hdop: %s | %s\n",
+        "GNSS time IST: %s | sats: %lu | hdop: %s\n",
         gpsLine,
         static_cast<unsigned long>(satCount),
-        hdopText,
-        diffLabel);
+        hdopText);
     wasGpsValid = true;
   } else {
     snprintf(gpsLine, sizeof(gpsLine), "No GNSS fix");
@@ -597,11 +661,10 @@ void loop() {
     const unsigned long nowLogMs = millis();
     if (nowLogMs - lastGpsStatusLogMs >= 1000UL) {
       Serial.printf(
-          "GNSS waiting... chars: %lu | sats: %lu | hdop: %s | %s\n",
+          "GNSS waiting... chars: %lu | sats: %lu | hdop: %s\n",
           static_cast<unsigned long>(gps.charsProcessed()),
           static_cast<unsigned long>(satCount),
-          hdopText,
-          diffLabel);
+          hdopText);
       lastGpsStatusLogMs = nowLogMs;
     }
     if (wasGpsValid) {
@@ -627,19 +690,21 @@ void loop() {
     snprintf(statusLine, sizeof(statusLine), "WiFiSetup: %s", apSsid);
   } else if (wifiPortal.isConnected()) {
     if (satValid) {
-      snprintf(statusLine, sizeof(statusLine), "Sat:%lu %s wf:%ld", static_cast<unsigned long>(satCount), diffLabel, static_cast<long>(WiFi.RSSI()));
+      snprintf(statusLine, sizeof(statusLine), "Sat:%lu wf:%ld", static_cast<unsigned long>(satCount), static_cast<long>(WiFi.RSSI()));
     } else {
-      snprintf(statusLine, sizeof(statusLine), "Sat:-- %s wf:%ld", diffLabel, static_cast<long>(WiFi.RSSI()));
+      snprintf(statusLine, sizeof(statusLine), "Sat:-- wf:%ld", static_cast<long>(WiFi.RSSI()));
     }
   } else {
     if (satValid) {
-      snprintf(statusLine, sizeof(statusLine), "Sat:%lu %s wf:--", static_cast<unsigned long>(satCount), diffLabel);
+      snprintf(statusLine, sizeof(statusLine), "Sat:%lu wf:--", static_cast<unsigned long>(satCount));
     } else {
-      snprintf(statusLine, sizeof(statusLine), "Sat:-- %s wf:--", diffLabel);
+      snprintf(statusLine, sizeof(statusLine), "Sat:-- wf:--");
     }
   }
 
   if (displayEnabled && !showingResetHoldOverlay) {
     drawClockPage(gpsTimeLine, gpsDateLine, ntpTimeLine, ntpDateLine, statusLine);
   }
+
+  updateCpuUtilization(micros() - loopStartUs);
 }

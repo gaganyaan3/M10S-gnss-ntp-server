@@ -72,6 +72,18 @@ Dashboard features:
 - NTP holdover toggle (saved in EEPROM)
 - Display enable toggle (saved in EEPROM)
 
+Live NAV-PVT-style stats page:
+
+```text
+http://<device-ip>/stats
+```
+
+Shows:
+- Latitude
+- Longitude
+- Altitude (m)
+- Speed (m/s)
+
 ## Build and Upload (PlatformIO)
 
 From this project folder:

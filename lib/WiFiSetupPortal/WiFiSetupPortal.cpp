@@ -35,6 +35,32 @@ String yesNoLabel(bool value) {
   return value ? F("Yes") : F("No");
 }
 
+const char* constellationLabel(uint8_t constellation) {
+  switch (constellation) {
+    case 1: return "GPS";
+    case 2: return "Galileo";
+    case 3: return "BeiDou";
+    case 4: return "GLONASS";
+    case 5: return "QZSS";
+    case 6: return "SBAS";
+    case 7: return "eGPS / Other";
+    default: return "Unknown";
+  }
+}
+
+const char* constellationDomId(uint8_t constellation) {
+  switch (constellation) {
+    case 1: return "gps";
+    case 2: return "galileo";
+    case 3: return "beidou";
+    case 4: return "glonass";
+    case 5: return "qzss";
+    case 6: return "sbas";
+    case 7: return "other";
+    default: return "unknown";
+  }
+}
+
 String formatIstFromEpoch(uint32_t epochUtc) {
   constexpr uint32_t IST_OFFSET_SECONDS = 19800UL;
   time_t istEpoch = static_cast<time_t>(epochUtc + IST_OFFSET_SECONDS);
@@ -94,6 +120,7 @@ void WiFiSetupPortal::startHttpServer() {
   server_.on("/connect-success", HTTP_GET, [this]() { handleConnectSuccess(); });
   server_.on("/connect-failed", HTTP_GET, [this]() { handleConnectFailed(); });
   server_.on("/gnss", HTTP_GET, [this]() { handleGpsDashboard(); });
+  server_.on("/stats", HTTP_GET, [this]() { handleStats(); });
   server_.on("/gnss-save", HTTP_POST, [this]() { handleGpsSave(); });
   server_.onNotFound([this]() { handleNotFound(); });
   server_.begin();
@@ -559,6 +586,24 @@ void WiFiSetupPortal::handleGpsDashboard() {
   server_.send(200, "text/html", gpsDashboardPage(settings, status));
 }
 
+void WiFiSetupPortal::handleStats() {
+  if (!gpsConfigProvider_) {
+    server_.send(503, "text/plain", "GPS dashboard is not configured");
+    return;
+  }
+
+  GpsDashboardSettings settings;
+  GpsDashboardStatus status;
+  gpsConfigProvider_(settings, status);
+  if (!settings.enableStats) {
+    // Keep the endpoint effectively disabled when stats collection is off.
+    server_.send(404, "text/plain", "Stats page disabled");
+    return;
+  }
+
+  server_.send(200, "text/html", statsPage(status));
+}
+
 void WiFiSetupPortal::handleGpsSave() {
   if (!gpsConfigProvider_ || !gpsConfigSaver_) {
     server_.send(503, "text/plain", "GPS dashboard is not configured");
@@ -571,6 +616,7 @@ void WiFiSetupPortal::handleGpsSave() {
 
   settings.rawLoggingEnabled = server_.hasArg("raw_logging");
   settings.ntpHoldoverEnabled = server_.hasArg("ntp_holdover");
+  settings.enableStats = server_.hasArg("enable_stats");
   settings.displayEnabled = server_.hasArg("display_enabled");
 
   if (!gpsConfigSaver_(settings)) {
@@ -687,6 +733,12 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
     gpsUtcEpoch = String(status.gpsEpochUtc);
   }
 
+  String cpuText = String(status.cpuUtilizationPercent, 1) + F("% CPU");
+  String temperatureText = F("--");
+  if (status.internalTemperatureC > -40.0f && status.internalTemperatureC < 120.0f) {
+    temperatureText = String(status.internalTemperatureC, 1) + F("°C");
+  }
+
   const String satelliteCount = status.satelliteCountValid ? String(status.satelliteCount) : String(F("--"));
   String page = F("<!DOCTYPE html><html><head>"
                   "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
@@ -698,9 +750,12 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
                   ".wrap{max-width:760px;margin:0 auto;display:grid;gap:18px}"
                   ".card{background:rgba(255,255,255,0.08);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);"
                     "border:1px solid rgba(255,255,255,0.18);border-radius:18px;padding:24px;box-shadow:0 10px 30px rgba(0,0,0,0.28)}"
+                  ".header-row{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}"
                   "h1{font-size:28px;margin-bottom:8px}"
                   "h2{font-size:18px;margin-bottom:14px}"
                   "p.lead{color:rgba(255,255,255,0.72)}"
+                  ".metrics{font-size:11px;line-height:1.5;text-align:right;color:rgba(255,255,255,0.82);letter-spacing:.06em;"
+                    "text-transform:uppercase;padding-top:4px}"
                   ".banner{margin-top:14px;background:rgba(25,135,84,0.18);border:1px solid rgba(25,135,84,0.55);"
                     "color:#bbf7d0;border-radius:12px;padding:12px 14px}"
                   ".grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}"
@@ -714,8 +769,19 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
                   ".toggle span{display:block;color:rgba(255,255,255,0.68);font-size:14px;line-height:1.4}"
                   "button{width:100%;padding:13px 16px;font-size:16px;font-weight:700;border:none;border-radius:10px;color:#fff;cursor:pointer;"
                     "background:linear-gradient(90deg,#0d6efd,#20c997);box-shadow:0 4px 14px rgba(13,110,253,0.35)}"
+                  "a.action{display:inline-block;margin-top:14px;padding:10px 14px;font-size:14px;font-weight:700;text-decoration:none;color:#fff;"
+                    "border-radius:10px;background:linear-gradient(90deg,#0d6efd,#20c997);box-shadow:0 4px 14px rgba(13,110,253,0.35)}"
                   "</style></head><body><div class=\"wrap\">"
-                  "<div class=\"card\"><h1>GNSS Config Dashboard</h1><p class=\"lead\">Runtime GNSS status and saved service settings.</p>");
+                  "<div class=\"card\"><div class=\"header-row\"><div><h1>GNSS Config Dashboard</h1><p class=\"lead\">Runtime GNSS status and saved service settings.</p></div>"
+                  "<div class=\"metrics\"><div>CPU: ");
+  page += htmlEscape(cpuText);
+  page += F("</div><div>Temp: ");
+  page += htmlEscape(temperatureText);
+  page += F("</div></div></div>");
+
+  if (settings.enableStats) {
+    page += F("<a class=\"action\" href=\"/stats\">Open Stats</a>");
+  }
 
   page += F("</div><div class=\"card\"><h2>Runtime Status</h2><div class=\"grid\">"
             "<div class=\"item\"><span class=\"label\">Satellites</span><span class=\"value\">");
@@ -742,8 +808,16 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
   if (settings.ntpHoldoverEnabled) {
     page += F(" checked");
   }
-  page += F("><span><strong>NTP holdover after first satellite</strong><span>Keep answering NTP after a first satellite-backed timestamp has been seen since boot.</span></span></label>"
-            "<label class=\"toggle\"><input type=\"checkbox\" name=\"display_enabled\"");
+  page += F(">"
+            "<span><strong>NTP holdover after first satellite</strong><span>Keep answering NTP after a first satellite-backed timestamp has been seen since boot.</span></span></label>"
+            "<label class=\"toggle\"><input type=\"checkbox\" name=\"enable_stats\""
+  );
+  if (settings.enableStats) {
+    page += F(" checked");
+  }
+  page += F("><span><strong>Enable stats</strong><span>Enable or disable statistics collection to reduce CPU usage.</span></span></label>"
+            "<label class=\"toggle\"><input type=\"checkbox\" name=\"display_enabled\""
+  );
   if (settings.displayEnabled) {
     page += F(" checked");
   }
@@ -760,5 +834,175 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
             "}"
             "})();</script>");
   page += F("</form></div></div></body></html>");
+  return page;
+}
+
+String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
+  String latitudeText = F("--");
+  if (status.latitudeValid) {
+    latitudeText = String(status.latitude, 6);
+  }
+
+  String longitudeText = F("--");
+  if (status.longitudeValid) {
+    longitudeText = String(status.longitude, 6);
+  }
+
+  String altitudeText = F("--");
+  if (status.altitudeValid) {
+    altitudeText = String(status.altitudeMeters, 1) + F(" m");
+  }
+
+  String speedText = F("--");
+  if (status.speedValid) {
+    speedText = String(status.speedMps, 2) + F(" m/s");
+  }
+
+  String hdopText = F("--");
+  if (status.hdopValid) {
+    hdopText = String(status.hdop, 1);
+  }
+
+  String navPvtStatus = status.navPvtValid ? F("Valid") : F("No fix");
+  String navSatStatus = status.navSatValid ? F("Valid") : F("Waiting for GSV data");
+
+  struct SatCountItem {
+    uint8_t constellation;
+    uint16_t count;
+  };
+
+  const SatCountItem counts[] = {
+      {1, status.gpsSatCount},
+      {2, status.galileoSatCount},
+      {3, status.beidouSatCount},
+      {4, status.glonassSatCount},
+      {5, status.qzssSatCount},
+      {6, status.sbasSatCount},
+      {7, status.otherSatCount},
+  };
+
+  String page = F("<!DOCTYPE html><html><head>"
+                  "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+                  "<meta charset=\"UTF-8\"><title>GNSS Stats</title>"
+                  "<style>"
+                  "*{box-sizing:border-box;margin:0;padding:0}"
+                  "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;"
+                    "background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);color:#fff;padding:20px}"
+                  ".wrap{max-width:760px;margin:0 auto;display:grid;gap:18px}"
+                  ".card{background:rgba(255,255,255,0.08);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);"
+                    "border:1px solid rgba(255,255,255,0.18);border-radius:18px;padding:24px;box-shadow:0 10px 30px rgba(0,0,0,0.28)}"
+                  "h1{font-size:28px;margin-bottom:8px}"
+                  "h2{font-size:18px;margin-bottom:14px}"
+                  "p.lead{color:rgba(255,255,255,0.72)}"
+                  ".grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}"
+                  ".item{background:rgba(255,255,255,0.05);border-radius:12px;padding:14px}"
+                  ".label{display:block;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.56);margin-bottom:6px}"
+                  ".value{font-size:18px;font-weight:700;word-break:break-word}"
+                  ".count-btn{width:100%;text-align:left;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.2);"
+                    "border-radius:12px;padding:14px;color:#fff;font-size:16px;font-weight:700;cursor:pointer}"
+                  ".count-btn:hover{background:rgba(255,255,255,0.1)}"
+                  ".details-help{margin-top:10px;font-size:13px;color:rgba(255,255,255,0.68)}"
+                  ".details-group{display:none;gap:10px;grid-template-columns:1fr}"
+                  ".details-group.active{display:grid}"
+                  ".sat-item{background:rgba(255,255,255,0.05);border-radius:12px;padding:14px;line-height:1.5}"
+                  ".sat-title{font-size:17px;font-weight:700;margin-bottom:4px}"
+                  "a.action{display:inline-block;margin-top:14px;padding:10px 14px;font-size:14px;font-weight:700;text-decoration:none;color:#fff;"
+                    "border-radius:10px;background:linear-gradient(90deg,#0d6efd,#20c997);box-shadow:0 4px 14px rgba(13,110,253,0.35)}"
+                  "</style></head><body><div class=\"wrap\">"
+                  "<div class=\"card\"><h1>Stats</h1>"
+                  "<p class=\"lead\">Live navigation snapshot rendered with the GNSS Config Dashboard theme.</p>"
+                  "<a class=\"action\" href=\"/gnss\">Back to GNSS Config Dashboard</a>"
+                  "</div><div class=\"card\"><h2>UBX-NAV-PVT</h2><div class=\"grid\">"
+                  "<div class=\"item\"><span class=\"label\">NAV-PVT</span><span class=\"value\">");
+
+  page += htmlEscape(navPvtStatus);
+  page += F("</span></div><div class=\"item\"><span class=\"label\">Latitude</span><span class=\"value\">");
+  page += htmlEscape(latitudeText);
+  page += F("</span></div><div class=\"item\"><span class=\"label\">Longitude</span><span class=\"value\">");
+  page += htmlEscape(longitudeText);
+  page += F("</span></div><div class=\"item\"><span class=\"label\">Altitude</span><span class=\"value\">");
+  page += htmlEscape(altitudeText);
+  page += F("</span></div><div class=\"item\"><span class=\"label\">Speed</span><span class=\"value\">");
+  page += htmlEscape(speedText);
+  page += F("</span></div><div class=\"item\"><span class=\"label\">HDOP</span><span class=\"value\">");
+  page += htmlEscape(hdopText);
+  page += F("</span></div><div class=\"item\"><span class=\"label\">PDOP</span><span class=\"value\">");
+  page += htmlEscape(status.pdopValid ? String(status.pdop, 1) : String("--"));
+  page += F("</span></div><div class=\"item\"><span class=\"label\">VDOP</span><span class=\"value\">");
+  page += htmlEscape(status.vdopValid ? String(status.vdop, 1) : String("--"));
+  page += F("</span></div></div></div>");
+
+  page += F("<div class=\"card\"><h2>UBX-NAV-SAT</h2><div class=\"grid\">");
+  for (size_t i = 0; i < sizeof(counts) / sizeof(counts[0]); ++i) {
+    const String label = String(constellationLabel(counts[i].constellation));
+    const String domId = String(constellationDomId(counts[i].constellation));
+    page += F("<button type=\"button\" class=\"count-btn\" data-target=\"");
+    page += htmlEscape(domId);
+    page += F("\">");
+    page += htmlEscape(label);
+    page += F(": ");
+    page += htmlEscape(String(counts[i].count));
+    page += F("</button>");
+  }
+  page += F("</div><div class=\"details-help\">Tap a constellation count to view all satellite details.</div>");
+  page += F("<div class=\"item\" style=\"margin-top:12px\"><span class=\"label\">NAV-SAT Status</span><span class=\"value\">");
+  page += htmlEscape(navSatStatus);
+  page += F("</span></div></div>");
+
+  const uint8_t constellations[] = {1, 2, 3, 4, 5, 6, 7};
+  page += F("<div class=\"card\"><h2>Satellite Details</h2>");
+  for (size_t c = 0; c < sizeof(constellations) / sizeof(constellations[0]); ++c) {
+    const String domId = String(constellationDomId(constellations[c]));
+    page += F("<div class=\"details-group\" id=\"sat-");
+    page += htmlEscape(domId);
+    page += F("\">");
+
+    bool hasAny = false;
+    for (size_t i = 0; i < status.navSatDetailCount; ++i) {
+      const auto& detail = status.navSatDetails[i];
+      if (detail.constellation != constellations[c]) {
+        continue;
+      }
+      hasAny = true;
+      page += F("<div class=\"sat-item\"><div class=\"sat-title\">");
+      page += htmlEscape(String(constellationLabel(detail.constellation)));
+      page += F(" PRN ");
+      page += htmlEscape(String(detail.prn));
+      page += F("</div><div>Elevation: ");
+      page += htmlEscape(String(detail.elevationDeg));
+      page += F("&deg;</div><div>Azimuth: ");
+      page += htmlEscape(String(detail.azimuthDeg));
+      page += F("&deg;</div><div>C/N0: ");
+      if (detail.cn0DbHz >= 0) {
+        page += htmlEscape(String(detail.cn0DbHz));
+        page += F(" dB-Hz");
+      } else {
+        page += F("--");
+      }
+      page += F("</div></div>");
+    }
+
+    if (!hasAny) {
+      page += F("<div class=\"sat-item\">No satellites reported for this constellation.</div>");
+    }
+    page += F("</div>");
+  }
+
+  page += F("<script>(function(){"
+            "var groups=document.querySelectorAll('.details-group');"
+            "var buttons=document.querySelectorAll('.count-btn');"
+            "function openGroup(id){"
+            "groups.forEach(function(g){g.classList.remove('active');});"
+            "var target=document.getElementById('sat-'+id);"
+            "if(target){target.classList.add('active');}"
+            "}"
+            "buttons.forEach(function(btn){"
+            "btn.addEventListener('click',function(){openGroup(btn.dataset.target);});"
+            "});"
+            "openGroup('gps');"
+            "})();</script>");
+
+  page += F("</div></div></body></html>");
+
   return page;
 }
