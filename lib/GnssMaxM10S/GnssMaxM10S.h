@@ -57,12 +57,26 @@ class GnssMaxM10S {
   void enableRawLogging(bool enable);
   void enableStats(bool enable);
   void onRawLine(RawLineCallback callback);
-  void onPpsEdge(uint32_t edgeMicros);
+
+  // Provides the PPS edge/clock code with a hardware tick source instead of
+  // the default micros() fallback. `nowTicksFn` must return the live value of
+  // a free-running counter clocked at `ticksPerSecond` (e.g. an MCPWM capture
+  // timer sampled via a software-forced capture), in the SAME domain as the
+  // ticks passed to onPpsEdge(), so elapsed-time math is a pure tick subtraction
+  // instead of relying on a separately-clocked software timer.
+  using TickClockFn = std::function<uint32_t()>;
+  void configurePpsHardwareClock(TickClockFn nowTicksFn, uint32_t ticksPerSecond);
+  void onPpsEdge(uint32_t edgeTicks);
   ClockStamp latestUtc();
   bool currentUtcEpoch(uint32_t& epochUtcOut);
   bool currentUtcEpochMs(uint64_t& epochMsUtcOut);
   bool currentUtcEpochPps(uint32_t& epochUtcOut);
   bool currentUtcEpochMsPps(uint64_t& epochMsUtcOut);
+  bool currentUtcEpochNsPps(uint64_t& epochNsUtcOut);
+  // Measured PPS tick rate (Hz), continuously disciplined against the GPS's
+  // own 1 Hz edge since the ESP32 crystal's absolute frequency is only
+  // accurate to tens of ppm -- far coarser than the module's PPS spec.
+  double ppsCalibratedTicksPerSecond() const;
   uint32_t charsProcessed() const;
   bool hasSatelliteCount() const;
   uint32_t satelliteCount();
@@ -123,8 +137,12 @@ class GnssMaxM10S {
   size_t rawLineBufferLength_ = 0;
   RawLineCallback rawLineCallback_;
   bool ppsAligned_ = false;
+  bool ppsHasPreviousEdge_ = false;
   uint32_t ppsReferenceEpochSec_ = 0;
-  uint32_t ppsEdgeMicros_ = 0;
+  uint32_t ppsEdgeTicks_ = 0;
+  TickClockFn ppsNowTicksFn_ = [](){ return micros(); };
+  uint32_t ppsNominalTicksPerSecond_ = 1000000UL;
+  double ppsCalibratedTicksPerSecond_ = 1000000.0;
   float pdop_ = 0.0f;
   float vdop_ = 0.0f;
   bool pdopValid_ = false;

@@ -7,6 +7,8 @@
 #include <time.h>
 #include <sys/time.h>
 #include <algorithm>
+#include "driver/mcpwm.h"
+#include "soc/mcpwm_struct.h"
 
 #include "GnssMaxM10S.h"
 #include "NmeaServer.h"
@@ -35,6 +37,20 @@ constexpr uint8_t GNSS_TX_PIN = 21;
 constexpr uint8_t PPS_PIN = 27;
 constexpr uint8_t BOOT_BUTTON_PIN = 0;
 
+// PPS is timestamped by the MCPWM hardware capture unit instead of a plain
+// GPIO interrupt: the edge instant is latched by dedicated hardware into a
+// free-running 80 MHz (APB_CLK) counter, independent of interrupt-service
+// jitter. CAP1 is left unbound to any pin and is only ever read via a
+// "software forced capture", which lets us sample the very same free-running
+// counter on demand -- giving a "now" value in the identical tick domain as
+// the PPS edge, so elapsed-time math is exact integer tick subtraction
+// (12.5 ns resolution) rather than a cross-domain micros() comparison.
+constexpr mcpwm_unit_t PPS_MCPWM_UNIT = MCPWM_UNIT_0;
+constexpr mcpwm_io_signals_t PPS_MCPWM_CAP_IO = MCPWM_CAP_0;
+constexpr mcpwm_capture_channel_id_t PPS_MCPWM_CAP_CHANNEL = MCPWM_SELECT_CAP0;
+constexpr uint8_t PPS_MCPWM_NOW_CHANNEL = 1;
+constexpr uint32_t PPS_MCPWM_TICKS_PER_SECOND = 80000000UL;
+
 const char* NTP_SERVER_1 = "time.cloudflare.com";
 const char* NTP_SERVER_2 = "time.google.com";
 const char* NTP_SERVER_3 = "time.aws.com";
@@ -59,8 +75,8 @@ bool wasGpsValid = false;
 bool ntpSynced = false;
 char apSsid[24] = "ESP-Setup";
 volatile uint32_t ppsPulseCount = 0;
-volatile uint32_t ppsLastEdgeMicros = 0;
-volatile uint32_t ppsPreviousEdgeMicros = 0;
+volatile uint32_t ppsLastEdgeTicks = 0;
+volatile uint32_t ppsPreviousEdgeTicks = 0;
 uint32_t lastLoggedPpsPulseCount = 0;
 bool displayEnabled = true;
 bool flashButtonStablePressed = false;
@@ -81,12 +97,22 @@ float currentInternalTemperatureC = 0.0f;
 uint64_t cpuUtilWindowStartUs = 0;
 uint64_t cpuUtilBusyUs = 0;
 
-IRAM_ATTR void onPpsInterrupt() {
-  const uint32_t nowMicros = micros();
+IRAM_ATTR bool onPpsCaptureEvent(mcpwm_unit_t mcpwm,
+                                 mcpwm_capture_channel_id_t cap_channel,
+                                 const cap_event_data_t* edata,
+                                 void* user_data) {
+  ppsPreviousEdgeTicks = ppsLastEdgeTicks;
+  ppsLastEdgeTicks = edata->cap_value;
   ++ppsPulseCount;
-  ppsPreviousEdgeMicros = ppsLastEdgeMicros;
-  ppsLastEdgeMicros = nowMicros;
-  gps.onPpsEdge(nowMicros);
+  return false;
+}
+
+// Forces the MCPWM capture timer (shared by all its capture channels) to
+// latch its current value into the unused CAP1 channel, giving a live "now"
+// read in the exact same 80 MHz tick domain as the PPS edge capture.
+IRAM_ATTR uint32_t ppsCaptureNowTicks() {
+  MCPWM0.cap_chn_cfg[PPS_MCPWM_NOW_CHANNEL].capn_sw = 1;
+  return MCPWM0.cap_chn[PPS_MCPWM_NOW_CHANNEL].capn_value;
 }
 
 void setDisplayEnabled(bool enable) {
@@ -469,8 +495,20 @@ void setup() {
   loadGpsDashboardSettings();
 
   pinMode(PPS_PIN, INPUT);
-  attachInterrupt(digitalPinToInterrupt(PPS_PIN), onPpsInterrupt, RISING);
-  Serial.printf("PPS input enabled on GPIO%d\n", PPS_PIN);
+  mcpwm_gpio_init(PPS_MCPWM_UNIT, PPS_MCPWM_CAP_IO, PPS_PIN);
+  mcpwm_capture_config_t ppsCaptureConfig = {};
+  ppsCaptureConfig.cap_edge = MCPWM_POS_EDGE;
+  ppsCaptureConfig.cap_prescale = 1;
+  ppsCaptureConfig.capture_cb = onPpsCaptureEvent;
+  ppsCaptureConfig.user_data = nullptr;
+  mcpwm_capture_enable_channel(PPS_MCPWM_UNIT, PPS_MCPWM_CAP_CHANNEL, &ppsCaptureConfig);
+  // Enable CAP1 purely so it can be sampled on demand via software-forced
+  // capture; it is not bound to any GPIO and never triggers on its own.
+  MCPWM0.cap_chn_cfg[PPS_MCPWM_NOW_CHANNEL].capn_en = 1;
+  MCPWM0.cap_chn_cfg[PPS_MCPWM_NOW_CHANNEL].capn_mode = 0;
+  gps.configurePpsHardwareClock(ppsCaptureNowTicks, PPS_MCPWM_TICKS_PER_SECOND);
+  Serial.printf("PPS hardware capture enabled on GPIO%d (MCPWM CAP0, %lu Hz)\n",
+                PPS_PIN, static_cast<unsigned long>(PPS_MCPWM_TICKS_PER_SECOND));
 
   // Build AP hotspot name from the last 3 MAC bytes: ESP-AABBCC
   {
@@ -563,22 +601,33 @@ void loop() {
   ntpServer.poll();
 
   uint32_t pulseCountSnapshot = 0;
-  uint32_t edgeMicrosSnapshot = 0;
-  uint32_t previousEdgeMicrosSnapshot = 0;
+  uint32_t edgeTicksSnapshot = 0;
+  uint32_t previousEdgeTicksSnapshot = 0;
   noInterrupts();
   pulseCountSnapshot = ppsPulseCount;
-  edgeMicrosSnapshot = ppsLastEdgeMicros;
-  previousEdgeMicrosSnapshot = ppsPreviousEdgeMicros;
+  edgeTicksSnapshot = ppsLastEdgeTicks;
+  previousEdgeTicksSnapshot = ppsPreviousEdgeTicks;
   interrupts();
   if (pulseCountSnapshot != lastLoggedPpsPulseCount) {
     lastLoggedPpsPulseCount = pulseCountSnapshot;
-    const uint32_t diffMicros = (edgeMicrosSnapshot > previousEdgeMicrosSnapshot)
-                                    ? (edgeMicrosSnapshot - previousEdgeMicrosSnapshot)
-                                    : 0;
-    Serial.printf("PPS pulse #%lu at %lu us | diff: %lu\n",
+    // Deliver the edge to the GPS clock here (flash-safe main-loop context)
+    // rather than from the hardware capture ISR, which must stay IRAM-only.
+    gps.onPpsEdge(edgeTicksSnapshot);
+    // The 32-bit tick counter wraps every ~53.7 s at 80 MHz; unwrap rather
+    // than treating a wrapped edge as a zero-length period.
+    const uint32_t diffTicks = edgeTicksSnapshot - previousEdgeTicksSnapshot;
+    // Divide by the GPS-disciplined rate, not the nominal 80 MHz figure: the
+    // ESP32 crystal's absolute frequency is only accurate to tens of ppm, so
+    // a raw nominal-rate period will show a constant offset from 1.0 s.
+    const double calibratedHz = gps.ppsCalibratedTicksPerSecond();
+    const double rawPeriodSeconds = static_cast<double>(diffTicks) / PPS_MCPWM_TICKS_PER_SECOND;
+    const double calibratedPeriodSeconds = static_cast<double>(diffTicks) / calibratedHz;
+    Serial.printf("PPS pulse #%lu at %lu ticks | rawS: %.9f s | calibrated: %.9f s | fq: %.1f Hz\n",
                   static_cast<unsigned long>(pulseCountSnapshot),
-                  static_cast<unsigned long>(edgeMicrosSnapshot),
-                  static_cast<unsigned long>(diffMicros));
+                  static_cast<unsigned long>(edgeTicksSnapshot),
+                  rawPeriodSeconds,
+                  calibratedPeriodSeconds,
+                  calibratedHz);
   }
 
   if (nowMs - lastDisplayUpdateMs < DISPLAY_INTERVAL_MS) {

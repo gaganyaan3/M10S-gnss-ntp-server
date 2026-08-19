@@ -74,10 +74,33 @@ void GnssMaxM10S::onRawLine(RawLineCallback callback) {
   rawLineCallback_ = callback;
 }
 
-void GnssMaxM10S::onPpsEdge(uint32_t edgeMicros) {
+void GnssMaxM10S::configurePpsHardwareClock(TickClockFn nowTicksFn, uint32_t ticksPerSecond) {
+  ppsNowTicksFn_ = nowTicksFn ? nowTicksFn : [](){ return micros(); };
+  ppsNominalTicksPerSecond_ = (ticksPerSecond > 0) ? ticksPerSecond : 1000000UL;
+  ppsCalibratedTicksPerSecond_ = static_cast<double>(ppsNominalTicksPerSecond_);
+}
+
+double GnssMaxM10S::ppsCalibratedTicksPerSecond() const {
+  return ppsCalibratedTicksPerSecond_;
+}
+
+void GnssMaxM10S::onPpsEdge(uint32_t edgeTicks) {
   if (!gps_.date.isValid() || !gps_.time.isValid()) {
     ppsAligned_ = false;
+    ppsHasPreviousEdge_ = false;
     return;
+  }
+
+  if (ppsHasPreviousEdge_) {
+    // Unsigned subtraction naturally unwraps the free-running tick counter.
+    const uint32_t measuredTicks = edgeTicks - ppsEdgeTicks_;
+    const double nominal = static_cast<double>(ppsNominalTicksPerSecond_);
+    // Reject missed edges / startup glitches instead of corrupting the estimate.
+    if (measuredTicks >= nominal * 0.99 && measuredTicks <= nominal * 1.01) {
+      constexpr double kSmoothing = 0.1;  // EMA weight per new PPS interval
+      ppsCalibratedTicksPerSecond_ = ppsCalibratedTicksPerSecond_ * (1.0 - kSmoothing) +
+                                      static_cast<double>(measuredTicks) * kSmoothing;
+    }
   }
 
   const uint32_t baseEpoch = toUnixUtc(
@@ -89,8 +112,9 @@ void GnssMaxM10S::onPpsEdge(uint32_t edgeMicros) {
       gps_.time.second());
 
   ppsReferenceEpochSec_ = baseEpoch + 1UL;
-  ppsEdgeMicros_ = edgeMicros;
+  ppsEdgeTicks_ = edgeTicks;
   ppsAligned_ = true;
+  ppsHasPreviousEdge_ = true;
 }
 
 ClockStamp GnssMaxM10S::latestUtc() {
@@ -164,25 +188,35 @@ bool GnssMaxM10S::currentUtcEpochPps(uint32_t& epochUtcOut) {
     return false;
   }
 
-  const uint32_t nowMicros = micros();
-  const uint32_t elapsedMicros = nowMicros >= ppsEdgeMicros_
-                                     ? nowMicros - ppsEdgeMicros_
-                                     : (0xFFFFFFFFUL - ppsEdgeMicros_) + nowMicros + 1UL;
-  epochUtcOut = ppsReferenceEpochSec_ + (elapsedMicros / 1000000UL);
+  const uint32_t nowTicks = ppsNowTicksFn_();
+  const uint32_t elapsedTicks = nowTicks - ppsEdgeTicks_;
+  const double elapsedSeconds = static_cast<double>(elapsedTicks) / ppsCalibratedTicksPerSecond_;
+  epochUtcOut = ppsReferenceEpochSec_ + static_cast<uint32_t>(elapsedSeconds);
   return true;
 }
 
 bool GnssMaxM10S::currentUtcEpochMsPps(uint64_t& epochMsUtcOut) {
+  uint64_t epochNsUtc = 0;
+  if (!currentUtcEpochNsPps(epochNsUtc)) {
+    return false;
+  }
+  epochMsUtcOut = epochNsUtc / 1000000ULL;
+  return true;
+}
+
+bool GnssMaxM10S::currentUtcEpochNsPps(uint64_t& epochNsUtcOut) {
   if (!ppsAligned_) {
     return false;
   }
 
-  const uint32_t nowMicros = micros();
-  const uint32_t elapsedMicros = nowMicros >= ppsEdgeMicros_
-                                     ? nowMicros - ppsEdgeMicros_
-                                     : (0xFFFFFFFFUL - ppsEdgeMicros_) + nowMicros + 1UL;
-  epochMsUtcOut = static_cast<uint64_t>(ppsReferenceEpochSec_) * 1000ULL +
-                  static_cast<uint64_t>(elapsedMicros / 1000UL);
+  const uint32_t nowTicks = ppsNowTicksFn_();
+  const uint32_t elapsedTicks = nowTicks - ppsEdgeTicks_;
+  const double elapsedSeconds = static_cast<double>(elapsedTicks) / ppsCalibratedTicksPerSecond_;
+  const uint64_t wholeSeconds = static_cast<uint64_t>(elapsedSeconds);
+  const double subSecondSeconds = elapsedSeconds - static_cast<double>(wholeSeconds);
+  const uint64_t subSecondNs = static_cast<uint64_t>(subSecondSeconds * 1000000000.0 + 0.5);
+
+  epochNsUtcOut = (static_cast<uint64_t>(ppsReferenceEpochSec_) + wholeSeconds) * 1000000000ULL + subSecondNs;
   return true;
 }
 
