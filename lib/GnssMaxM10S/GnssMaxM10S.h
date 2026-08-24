@@ -23,6 +23,19 @@ struct GnssSatelliteInfo {
   int16_t cn0DbHz = -1;
 };
 
+// Subset of UBX-NAV-PVT fields relevant to fix quality and time validity.
+// fixType values: 0=no fix, 1=dead reckoning, 2=2D, 3=3D, 4=GNSS+DR, 5=time only
+struct GnssNavPvtData {
+  bool valid = false;           // true once a NAV-PVT frame has been received
+  uint8_t fixType = 0;          // payload byte 20
+  bool gnssFixOK = false;       // flags byte 21, bit 0
+  bool validDate = false;       // valid byte 11, bit 0
+  bool validTime = false;       // valid byte 11, bit 1
+  bool fullyResolved = false;   // valid byte 11, bit 2
+  bool confirmedDate = false;   // flags2 byte 22, bit 6
+  bool confirmedTime = false;   // flags2 byte 22, bit 7
+};
+
 struct GnssNavSatSnapshot {
   static constexpr size_t kMaxSatellites = 64;
 
@@ -73,10 +86,7 @@ class GnssMaxM10S {
   bool currentUtcEpochPps(uint32_t& epochUtcOut);
   bool currentUtcEpochMsPps(uint64_t& epochMsUtcOut);
   bool currentUtcEpochNsPps(uint64_t& epochNsUtcOut);
-  // Measured PPS tick rate (Hz), continuously disciplined against the GPS's
-  // own 1 Hz edge since the ESP32 crystal's absolute frequency is only
-  // accurate to tens of ppm -- far coarser than the module's PPS spec.
-  double ppsCalibratedTicksPerSecond() const;
+  bool isPpsAligned() const;
   uint32_t charsProcessed() const;
   bool hasSatelliteCount() const;
   uint32_t satelliteCount();
@@ -94,6 +104,7 @@ class GnssMaxM10S {
   bool hasSpeed() const;
   double speedMps();
   void navSatSnapshot(GnssNavSatSnapshot& out) const;
+  void navPvtSnapshot(GnssNavPvtData& out) const;
   void enableUbxLogging(bool enable);
 
  private:
@@ -107,6 +118,7 @@ class GnssMaxM10S {
   void parseGsvSentence(const char* line);
   void parseGsaSentence(const char* line);
   void parseUbxByte(uint8_t byteValue);
+  void sendUbxCfgMsg(uint8_t msgClass, uint8_t msgId, uint8_t rate);
   void handleUbxFrame(uint8_t messageClass,
                       uint8_t messageId,
                       const uint8_t* payload,
@@ -142,7 +154,6 @@ class GnssMaxM10S {
   uint32_t ppsEdgeTicks_ = 0;
   TickClockFn ppsNowTicksFn_ = [](){ return micros(); };
   uint32_t ppsNominalTicksPerSecond_ = 1000000UL;
-  double ppsCalibratedTicksPerSecond_ = 1000000.0;
   float pdop_ = 0.0f;
   float vdop_ = 0.0f;
   bool pdopValid_ = false;
@@ -172,6 +183,7 @@ class GnssMaxM10S {
   bool ubxLoggingEnabled_ = false;
   bool statsEnabled_ = true;
 
+  GnssNavPvtData navPvtData_ = {};
   SatelliteRecord satelliteRecords_[kMaxSatelliteRecords] = {};
   uint32_t lastNavSatUpdateMs_ = 0;
 };

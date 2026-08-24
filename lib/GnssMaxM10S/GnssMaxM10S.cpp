@@ -17,8 +17,34 @@ GnssMaxM10S::GnssMaxM10S(uint8_t rxPin,
                          HardwareSerial& serialPort)
     : serial_(serialPort), rxPin_(rxPin), txPin_(txPin), baud_(baud) {}
 
+void GnssMaxM10S::sendUbxCfgMsg(uint8_t msgClass, uint8_t msgId, uint8_t rate) {
+  // UBX-CFG-MSG (0x06 0x01) — 8-byte payload:
+  // [0] msgClass  [1] msgId
+  // [2..7] rate for each port (I2C, UART1, UART2, USB, SPI, reserved)
+  // We only care about UART1 (index 1).
+  const uint8_t payload[8] = {msgClass, msgId, 0, rate, 0, 0, 0, 0};
+  uint8_t ckA = 0, ckB = 0;
+  // Checksum covers class + id + length bytes + payload
+  const uint8_t header[4] = {0x06, 0x01, 8, 0};
+  for (uint8_t b : header) { ckA += b; ckB += ckA; }
+  for (uint8_t b : payload) { ckA += b; ckB += ckA; }
+
+  serial_.write(0xB5);
+  serial_.write(0x62);
+  serial_.write(header, 4);
+  serial_.write(payload, 8);
+  serial_.write(ckA);
+  serial_.write(ckB);
+  serial_.flush();
+}
+
 void GnssMaxM10S::begin() {
   serial_.begin(baud_, SERIAL_8N1, rxPin_, txPin_);
+  // Allow the module a moment to finish its boot NMEA burst before we send
+  // configuration commands (the MAX-M10S needs ~100 ms after power-on).
+  delay(200);
+  sendUbxCfgMsg(0x01, 0x07, 1);  // Enable UBX-NAV-PVT  on UART1
+  sendUbxCfgMsg(0x01, 0x35, 1);  // Enable UBX-NAV-SAT  on UART1
 }
 
 void GnssMaxM10S::poll() {
@@ -77,11 +103,6 @@ void GnssMaxM10S::onRawLine(RawLineCallback callback) {
 void GnssMaxM10S::configurePpsHardwareClock(TickClockFn nowTicksFn, uint32_t ticksPerSecond) {
   ppsNowTicksFn_ = nowTicksFn ? nowTicksFn : [](){ return micros(); };
   ppsNominalTicksPerSecond_ = (ticksPerSecond > 0) ? ticksPerSecond : 1000000UL;
-  ppsCalibratedTicksPerSecond_ = static_cast<double>(ppsNominalTicksPerSecond_);
-}
-
-double GnssMaxM10S::ppsCalibratedTicksPerSecond() const {
-  return ppsCalibratedTicksPerSecond_;
 }
 
 void GnssMaxM10S::onPpsEdge(uint32_t edgeTicks) {
@@ -91,16 +112,17 @@ void GnssMaxM10S::onPpsEdge(uint32_t edgeTicks) {
     return;
   }
 
-  if (ppsHasPreviousEdge_) {
-    // Unsigned subtraction naturally unwraps the free-running tick counter.
-    const uint32_t measuredTicks = edgeTicks - ppsEdgeTicks_;
-    const double nominal = static_cast<double>(ppsNominalTicksPerSecond_);
-    // Reject missed edges / startup glitches instead of corrupting the estimate.
-    if (measuredTicks >= nominal * 0.99 && measuredTicks <= nominal * 1.01) {
-      constexpr double kSmoothing = 0.1;  // EMA weight per new PPS interval
-      ppsCalibratedTicksPerSecond_ = ppsCalibratedTicksPerSecond_ * (1.0 - kSmoothing) +
-                                      static_cast<double>(measuredTicks) * kSmoothing;
-    }
+  // Guard against stale NMEA data. The PPS rising edge marks the start of the
+  // *next* second, so the NMEA sentence for the *current* second must have
+  // already been received and parsed. On a 9600 baud link that normally happens
+  // within ~50–100 ms of the sentence start, well before the PPS edge. If the
+  // age is older than ~1.2 s the parser has likely missed a sentence (e.g. due
+  // to a signal dropout), meaning baseEpoch would be off by at least 1 second.
+  constexpr uint32_t MAX_NMEA_AGE_MS = 1200UL;
+  if (gps_.time.age() > MAX_NMEA_AGE_MS) {
+    ppsAligned_ = false;
+    ppsHasPreviousEdge_ = false;
+    return;
   }
 
   const uint32_t baseEpoch = toUnixUtc(
@@ -190,7 +212,8 @@ bool GnssMaxM10S::currentUtcEpochPps(uint32_t& epochUtcOut) {
 
   const uint32_t nowTicks = ppsNowTicksFn_();
   const uint32_t elapsedTicks = nowTicks - ppsEdgeTicks_;
-  const double elapsedSeconds = static_cast<double>(elapsedTicks) / ppsCalibratedTicksPerSecond_;
+  const double elapsedSeconds = static_cast<double>(elapsedTicks) /
+                                static_cast<double>(ppsNominalTicksPerSecond_);
   epochUtcOut = ppsReferenceEpochSec_ + static_cast<uint32_t>(elapsedSeconds);
   return true;
 }
@@ -211,13 +234,18 @@ bool GnssMaxM10S::currentUtcEpochNsPps(uint64_t& epochNsUtcOut) {
 
   const uint32_t nowTicks = ppsNowTicksFn_();
   const uint32_t elapsedTicks = nowTicks - ppsEdgeTicks_;
-  const double elapsedSeconds = static_cast<double>(elapsedTicks) / ppsCalibratedTicksPerSecond_;
+  const double elapsedSeconds = static_cast<double>(elapsedTicks) /
+                                static_cast<double>(ppsNominalTicksPerSecond_);
   const uint64_t wholeSeconds = static_cast<uint64_t>(elapsedSeconds);
   const double subSecondSeconds = elapsedSeconds - static_cast<double>(wholeSeconds);
   const uint64_t subSecondNs = static_cast<uint64_t>(subSecondSeconds * 1000000000.0 + 0.5);
 
   epochNsUtcOut = (static_cast<uint64_t>(ppsReferenceEpochSec_) + wholeSeconds) * 1000000000ULL + subSecondNs;
   return true;
+}
+
+bool GnssMaxM10S::isPpsAligned() const {
+  return ppsAligned_;
 }
 
 uint32_t GnssMaxM10S::charsProcessed() const {
@@ -329,6 +357,10 @@ void GnssMaxM10S::navSatSnapshot(GnssNavSatSnapshot& out) const {
   }
 
   out.valid = (nowMs - lastNavSatUpdateMs_ <= kNavSatStaleMs) && (out.satelliteCount > 0);
+}
+
+void GnssMaxM10S::navPvtSnapshot(GnssNavPvtData& out) const {
+  out = navPvtData_;
 }
 
 GnssConstellation GnssMaxM10S::constellationFromUbxGnssId(uint8_t gnssId) {
@@ -459,9 +491,41 @@ void GnssMaxM10S::handleUbxFrame(uint8_t messageClass,
     Serial.println();
   }
   constexpr uint8_t UBX_CLASS_NAV = 0x01;
+  constexpr uint8_t UBX_ID_NAV_PVT = 0x07;
   constexpr uint8_t UBX_ID_NAV_SAT = 0x35;
 
-  if (messageClass != UBX_CLASS_NAV || messageId != UBX_ID_NAV_SAT || payloadLength < 8) {
+  if (messageClass != UBX_CLASS_NAV) {
+    return;
+  }
+  // if (messageId == UBX_ID_NAV_PVT) {
+  //     Serial.printf("PVT length=%d\n", payloadLength);
+
+  //     for (int i = 0; i < payloadLength; i++) {
+  //         Serial.printf("%02X ", payload[i]);
+  //     }
+  //     Serial.println();
+  // }
+  // ---- UBX-NAV-PVT (0x01 / 0x07) ----------------------------------------
+  // Payload must be at least 23 bytes to reach flags2 (byte 22).
+  if (messageId == UBX_ID_NAV_PVT && payloadLength >= 23) {
+    const uint8_t validByte  = payload[11];   // validity flags
+    const uint8_t fixTypeByte = payload[20];  // fix type
+    const uint8_t flagsByte  = payload[21];   // gnssFixOK etc.
+    const uint8_t flags2Byte = payload[22];   // confirmedDate/Time
+
+    navPvtData_.fixType       = fixTypeByte;
+    navPvtData_.gnssFixOK     = (flagsByte  & 0x01) != 0;
+    navPvtData_.validDate     = (validByte  & 0x01) != 0;
+    navPvtData_.validTime     = (validByte  & 0x02) != 0;
+    navPvtData_.fullyResolved = (validByte  & 0x04) != 0;
+    navPvtData_.confirmedDate = (flags2Byte & 0x40) != 0;
+    navPvtData_.confirmedTime = (flags2Byte & 0x80) != 0;
+    navPvtData_.valid         = true;
+    return;
+  }
+
+  // ---- UBX-NAV-SAT (0x01 / 0x35) ----------------------------------------
+  if (messageId != UBX_ID_NAV_SAT || payloadLength < 8) {
     return;
   }
 

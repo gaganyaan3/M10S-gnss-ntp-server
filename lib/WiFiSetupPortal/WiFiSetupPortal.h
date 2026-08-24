@@ -27,6 +27,9 @@ struct GpsDashboardStatus {
   bool satelliteCountValid = false;
   uint32_t satelliteCount = 0;
   bool seenSatelliteSinceBoot = false;
+  bool ppsAligned = false;
+  bool ppsPeriodValid = false;
+  double ppsPeriodSeconds = 0.0;
   bool gpsTimeValid = false;
   uint32_t gpsEpochUtc = 0;
   bool navPvtValid = false;
@@ -45,6 +48,13 @@ struct GpsDashboardStatus {
   bool vdopValid = false;
   double vdop = 0.0;
   bool navSatValid = false;
+  uint8_t navPvtFixType = 0;
+  bool navPvtGnssFixOK = false;
+  bool navPvtValidDate = false;
+  bool navPvtValidTime = false;
+  bool navPvtFullyResolved = false;
+  bool navPvtConfirmedDate = false;
+  bool navPvtConfirmedTime = false;
   uint16_t gpsSatCount = 0;
   uint16_t galileoSatCount = 0;
   uint16_t beidouSatCount = 0;

@@ -796,7 +796,20 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
   page += htmlEscape(String(status.nmeaPort));
   page += F("</span></div><div class=\"item\"><span class=\"label\">NTP Port</span><span class=\"value\">");
   page += htmlEscape(String(status.ntpPort));
-  page += F("</span></div></div></div>");
+  page += F("</span></div><div class=\"item\"><span class=\"label\">fullyResolved</span><span class=\"value\">");
+  page += status.navPvtFullyResolved ? F("Yes") : F("No");
+  page += F("</span></div>"
+            "<div class=\"item\"><span class=\"label\">PPS</span><span class=\"value\">");
+  page += status.ppsAligned ? F("Yes") : F("No");
+  page += F("</span></div>");
+  if (status.ppsPeriodValid) {
+    page += F("<div class=\"item\"><span class=\"label\">PPS Period</span><span class=\"value\">");
+    char ppsBuf[20];
+    snprintf(ppsBuf, sizeof(ppsBuf), "%.9f s", status.ppsPeriodSeconds);
+    page += htmlEscape(String(ppsBuf));
+    page += F("</span></div>");
+  }
+  page += F("</div></div>");
 
   page += F("<div class=\"card\"><h2>Saved Settings</h2><form action=\"/gnss-save\" method=\"POST\">"
             "<label class=\"toggle\"><input type=\"checkbox\" name=\"raw_logging\"");
@@ -809,7 +822,7 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
     page += F(" checked");
   }
   page += F(">"
-            "<span><strong>NTP holdover after first satellite</strong><span>Keep answering NTP after a first satellite-backed timestamp has been seen since boot.</span></span></label>"
+            "<span><strong>NTP holdover after fullyResolved</strong><span>Keep answering NTP after a fullyResolved GNSS timestamp has been obtained. NTP responses are suppressed until fullyResolved is true.</span></span></label>"
             "<label class=\"toggle\"><input type=\"checkbox\" name=\"enable_stats\""
   );
   if (settings.enableStats) {
@@ -865,6 +878,19 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
 
   String navPvtStatus = status.navPvtValid ? F("Valid") : F("No fix");
   String navSatStatus = status.navSatValid ? F("Valid") : F("Waiting for GSV data");
+
+  // fixType human-readable label (u-blox interface spec, table UBX-NAV-PVT)
+  const char* fixTypeLabels[] = {
+    "0 - No fix",
+    "1 - Dead reckoning",
+    "2 - 2D fix",
+    "3 - 3D fix",
+    "4 - GNSS + DR",
+    "5 - Time only",
+  };
+  const char* fixTypeLabel = (status.navPvtFixType < 6)
+      ? fixTypeLabels[status.navPvtFixType]
+      : "Unknown";
 
   struct SatCountItem {
     uint8_t constellation;
@@ -930,6 +956,27 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
   page += htmlEscape(status.pdopValid ? String(status.pdop, 1) : String("--"));
   page += F("</span></div><div class=\"item\"><span class=\"label\">VDOP</span><span class=\"value\">");
   page += htmlEscape(status.vdopValid ? String(status.vdop, 1) : String("--"));
+  page += F("</span></div>"
+            "<div class=\"item\"><span class=\"label\">fixType</span><span class=\"value\">");
+  page += htmlEscape(String(fixTypeLabel));
+  page += F("</span></div>"
+            "<div class=\"item\"><span class=\"label\">gnssFixOK</span><span class=\"value\">");
+  page += status.navPvtGnssFixOK ? F("Yes") : F("No");
+  page += F("</span></div>"
+            "<div class=\"item\"><span class=\"label\">validDate</span><span class=\"value\">");
+  page += status.navPvtValidDate ? F("Yes") : F("No");
+  page += F("</span></div>"
+            "<div class=\"item\"><span class=\"label\">validTime</span><span class=\"value\">");
+  page += status.navPvtValidTime ? F("Yes") : F("No");
+  page += F("</span></div>"
+            "<div class=\"item\"><span class=\"label\">fullyResolved</span><span class=\"value\">");
+  page += status.navPvtFullyResolved ? F("Yes") : F("No");
+  page += F("</span></div>"
+            "<div class=\"item\"><span class=\"label\">confirmedDate</span><span class=\"value\">");
+  page += status.navPvtConfirmedDate ? F("Yes") : F("No");
+  page += F("</span></div>"
+            "<div class=\"item\"><span class=\"label\">confirmedTime</span><span class=\"value\">");
+  page += status.navPvtConfirmedTime ? F("Yes") : F("No");
   page += F("</span></div></div></div>");
 
   page += F("<div class=\"card\"><h2>UBX-NAV-SAT</h2><div class=\"grid\">");

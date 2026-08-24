@@ -78,6 +78,8 @@ volatile uint32_t ppsPulseCount = 0;
 volatile uint32_t ppsLastEdgeTicks = 0;
 volatile uint32_t ppsPreviousEdgeTicks = 0;
 uint32_t lastLoggedPpsPulseCount = 0;
+double lastPpsPeriodSeconds = 0.0;
+bool lastPpsPeriodValid = false;
 bool displayEnabled = true;
 bool flashButtonStablePressed = false;
 bool flashButtonLastPhysicalPressed = false;
@@ -110,8 +112,17 @@ IRAM_ATTR bool onPpsCaptureEvent(mcpwm_unit_t mcpwm,
 // Forces the MCPWM capture timer (shared by all its capture channels) to
 // latch its current value into the unused CAP1 channel, giving a live "now"
 // read in the exact same 80 MHz tick domain as the PPS edge capture.
+//
+// Writing capn_sw=1 triggers the latch in hardware, but the peripheral needs
+// 1–2 APB clock cycles before capn_value is updated. A compiler memory barrier
+// plus one dummy register read ensures the write has propagated before we
+// sample the result, preventing a stale latch from being returned.
 IRAM_ATTR uint32_t ppsCaptureNowTicks() {
   MCPWM0.cap_chn_cfg[PPS_MCPWM_NOW_CHANNEL].capn_sw = 1;
+  // Compiler barrier: prevent reordering of the write above with the read below.
+  __asm__ __volatile__("" ::: "memory");
+  // Dummy read of the config register to let the latch settle (1–2 APB cycles).
+  (void)MCPWM0.cap_chn_cfg[PPS_MCPWM_NOW_CHANNEL].capn_sw;
   return MCPWM0.cap_chn[PPS_MCPWM_NOW_CHANNEL].capn_value;
 }
 
@@ -186,6 +197,19 @@ bool updateGpsHoldoverFromLiveFix(unsigned long nowMs, uint64_t& epochMsUtcOut) 
     return false;
   }
 
+  // Always record that we have seen a satellite since boot (used by the
+  // dashboard "Seen Satellite Since Boot" field) regardless of fix quality.
+  gpsSeenSatelliteSinceBoot = true;
+
+  // Only accept the timestamp for NTP / holdover purposes when the GNSS
+  // module reports fullyResolved — meaning the UTC time is unambiguous and
+  // not just a best-effort estimate.
+  GnssNavPvtData pvt;
+  gps.navPvtSnapshot(pvt);
+  if (!pvt.valid || !pvt.fullyResolved) {
+    return false;
+  }
+
   bool valid = gps.currentUtcEpochMsPps(epochMsUtcOut);
   if (!valid) {
     valid = gps.currentUtcEpochMs(epochMsUtcOut);
@@ -194,7 +218,6 @@ bool updateGpsHoldoverFromLiveFix(unsigned long nowMs, uint64_t& epochMsUtcOut) 
     return false;
   }
 
-  gpsSeenSatelliteSinceBoot = true;
   ntpHoldoverValid = true;
   ntpHoldoverBaseEpochMsUtc = epochMsUtcOut;
   ntpHoldoverSetAtMs = nowMs;
@@ -207,7 +230,7 @@ bool currentGpsNtpEpochMs(uint64_t& epochMsUtcOut) {
     return true;
   }
 
-  if (!gpsDashboardSettings.ntpHoldoverEnabled || !gpsSeenSatelliteSinceBoot || !ntpHoldoverValid) {
+  if (!gpsDashboardSettings.ntpHoldoverEnabled || !ntpHoldoverValid) {
     return false;
   }
 
@@ -222,6 +245,9 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
     statusOut.satelliteCount = gps.satelliteCount();
   }
   statusOut.seenSatelliteSinceBoot = gpsSeenSatelliteSinceBoot;
+  statusOut.ppsAligned = gps.isPpsAligned();
+  statusOut.ppsPeriodValid = lastPpsPeriodValid;
+  statusOut.ppsPeriodSeconds = lastPpsPeriodSeconds;
   uint64_t epochMsUtc = 0;
   statusOut.gpsTimeValid = currentGpsNtpEpochMs(epochMsUtc);
   if (statusOut.gpsTimeValid) {
@@ -234,6 +260,25 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
   statusOut.ntpPort = NtpServer::DEFAULT_PORT;
   statusOut.cpuUtilizationPercent = currentCpuUtilizationPercent;
   statusOut.internalTemperatureC = currentInternalTemperatureC;
+
+  // Compute navPvtValid here (before the enableStats guard) so the dashboard
+  // can always show it regardless of whether stats collection is on or off.
+  statusOut.navPvtValid = gps.hasLocation() &&
+                          gps.hasAltitude() &&
+                          gps.hasSpeed();
+
+  // NAV-PVT detail fields — parsed directly from UBX binary, always available.
+  {
+    GnssNavPvtData pvt;
+    gps.navPvtSnapshot(pvt);
+    statusOut.navPvtFixType        = pvt.fixType;
+    statusOut.navPvtGnssFixOK      = pvt.gnssFixOK;
+    statusOut.navPvtValidDate      = pvt.validDate;
+    statusOut.navPvtValidTime      = pvt.validTime;
+    statusOut.navPvtFullyResolved  = pvt.fullyResolved;
+    statusOut.navPvtConfirmedDate  = pvt.confirmedDate;
+    statusOut.navPvtConfirmedTime  = pvt.confirmedTime;
+  }
 
   if (!settingsOut.enableStats) {
     // Skip stats-only fields so /stats-related work stays off when disabled.
@@ -274,11 +319,6 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
   if (statusOut.vdopValid) {
     statusOut.vdop = gps.vdop();
   }
-
-  statusOut.navPvtValid = statusOut.latitudeValid &&
-                          statusOut.longitudeValid &&
-                          statusOut.altitudeValid &&
-                          statusOut.speedValid;
 
   GnssNavSatSnapshot navSat;
   gps.navSatSnapshot(navSat);
@@ -545,8 +585,6 @@ void setup() {
   }
 
   gps.begin();
-  // Enable UBX frame hex dump to Serial for diagnosis (temporary)
-  gps.enableUbxLogging(true);
   applyGpsDashboardSettings();
   nmeaServer.setLineTransformer([](const String& line) { return applyPpsTimeToNmeaLine(line); });
   gps.onRawLine([](const String& line) { nmeaServer.broadcastLine(line); });
@@ -627,24 +665,17 @@ void loop() {
   interrupts();
   if (pulseCountSnapshot != lastLoggedPpsPulseCount) {
     lastLoggedPpsPulseCount = pulseCountSnapshot;
-    // Deliver the edge to the GPS clock here (flash-safe main-loop context)
-    // rather than from the hardware capture ISR, which must stay IRAM-only.
     gps.onPpsEdge(edgeTicksSnapshot);
-    // The 32-bit tick counter wraps every ~53.7 s at 80 MHz; unwrap rather
-    // than treating a wrapped edge as a zero-length period.
     const uint32_t diffTicks = edgeTicksSnapshot - previousEdgeTicksSnapshot;
-    // Divide by the GPS-disciplined rate, not the nominal 80 MHz figure: the
-    // ESP32 crystal's absolute frequency is only accurate to tens of ppm, so
-    // a raw nominal-rate period will show a constant offset from 1.0 s.
-    const double calibratedHz = gps.ppsCalibratedTicksPerSecond();
-    const double rawPeriodSeconds = static_cast<double>(diffTicks) / PPS_MCPWM_TICKS_PER_SECOND;
-    const double calibratedPeriodSeconds = static_cast<double>(diffTicks) / calibratedHz;
-    Serial.printf("PPS pulse #%lu at %lu ticks | rawS: %.9f s | calibrated: %.9f s | fq: %.1f Hz\n",
+    const double periodSeconds = static_cast<double>(diffTicks) / PPS_MCPWM_TICKS_PER_SECOND;
+    if (pulseCountSnapshot > 1) {
+      lastPpsPeriodSeconds = periodSeconds;
+      lastPpsPeriodValid = true;
+    }
+    Serial.printf("PPS pulse #%lu at %lu ticks | PPS: %.9f s\n",
                   static_cast<unsigned long>(pulseCountSnapshot),
                   static_cast<unsigned long>(edgeTicksSnapshot),
-                  rawPeriodSeconds,
-                  calibratedPeriodSeconds,
-                  calibratedHz);
+                  periodSeconds);
   }
 
   if (nowMs - lastDisplayUpdateMs < DISPLAY_INTERVAL_MS) {
@@ -723,10 +754,9 @@ void loop() {
       Serial.println("GNSS fix acquired");
     }
     Serial.printf(
-        "GNSS time IST: %s | sats: %lu | hdop: %s\n",
+        "GNSS time IST: %s | sats: %lu\n",
         gpsLine,
-        static_cast<unsigned long>(satCount),
-        hdopText);
+        static_cast<unsigned long>(satCount));
     wasGpsValid = true;
   } else {
     snprintf(gpsLine, sizeof(gpsLine), "No GNSS fix");
@@ -735,10 +765,9 @@ void loop() {
     const unsigned long nowLogMs = millis();
     if (nowLogMs - lastGpsStatusLogMs >= 1000UL) {
       Serial.printf(
-          "GNSS waiting... chars: %lu | sats: %lu | hdop: %s\n",
+          "GNSS waiting... chars: %lu | sats: %lu\n",
           static_cast<unsigned long>(gps.charsProcessed()),
-          static_cast<unsigned long>(satCount),
-          hdopText);
+          static_cast<unsigned long>(satCount));
       lastGpsStatusLogMs = nowLogMs;
     }
     if (wasGpsValid) {
