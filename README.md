@@ -25,6 +25,15 @@ Displayed time is IST and refreshes every second in this format:
 - PPS -> GPIO27
 - GND (module) must be common with ESP32 GND
 
+> **PPS is captured by the ESP32's MCPWM hardware capture unit (CAP0) clocked
+> at 80 MHz (APB_CLK), not a software GPIO interrupt.** The rising edge instant
+> is latched into a free-running 80 MHz counter by dedicated hardware,
+> eliminating interrupt-service jitter. A second capture channel (CAP1) is
+> left unbound to any pin and sampled via a software-forced capture to read the
+> same counter on demand — giving a "now" tick in the exact same domain as the
+> PPS edge, so elapsed-time math is pure integer tick subtraction at 12.5 ns
+> resolution.
+
 ### BOOT Button (already on most ESP32 DevKit boards)
 - BOOT -> GPIO0 (active LOW)
 - Short press: toggle OLED display ON/OFF
@@ -57,6 +66,30 @@ replying with invalid timestamps.
 
 After first satellite-backed time is seen since boot, optional holdover keeps
 NTP responses available even if live satellite fix is temporarily lost.
+
+#### PPS-Disciplined Clock (hardware capture + EMA calibration)
+
+Time interpolation between PPS edges uses the MCPWM 80 MHz hardware capture
+counter. The measured tick interval between consecutive PPS edges is fed into
+an **exponential moving average (EMA, α = 0.1)** that continuously disciplines
+the nominal 80 MHz rate against the GPS module's own 1 Hz PPS edge — correcting
+for the ESP32 crystal's absolute frequency error (typically tens of ppm).
+
+New time-query API added to `GnssMaxM10S`:
+
+| Method | Returns |
+|---|---|
+| `currentUtcEpochPps(uint32_t&)` | Whole-second UTC epoch via PPS |
+| `currentUtcEpochMsPps(uint64_t&)` | Millisecond UTC epoch via PPS |
+| `currentUtcEpochNsPps(uint64_t&)` | **Nanosecond** UTC epoch via PPS (new) |
+| `ppsCalibratedTicksPerSecond()` | Live EMA-calibrated tick rate (Hz) |
+| `configurePpsHardwareClock(fn, hz)` | Inject custom tick source + nominal rate |
+
+Serial log format per PPS pulse:
+
+```
+PPS pulse #N at <ticks> ticks | rawS: 1.000000000 s | calibrated: 0.999999987 s | fq: 80000001.1 Hz
+```
 
 ## GNSS Dashboard
 
@@ -113,9 +146,9 @@ UBX-NAV-TIMEGPS
 ```
 ## Project Structure
 
-- [src/main.cpp](src/main.cpp): main application loop, OLED rendering, GNSS/NTP integration, PPS handling
-- [lib/GnssMaxM10S/GnssMaxM10S.h](lib/GnssMaxM10S/GnssMaxM10S.h): GNSS parser/clock interface (TinyGPS++)
-- [lib/GnssMaxM10S/GnssMaxM10S.cpp](lib/GnssMaxM10S/GnssMaxM10S.cpp): GNSS UART polling and PPS-assisted time interpolation
+- [src/main.cpp](src/main.cpp): main application loop, OLED rendering, GNSS/NTP integration, PPS hardware capture (MCPWM)
+- [lib/GnssMaxM10S/GnssMaxM10S.h](lib/GnssMaxM10S/GnssMaxM10S.h): GNSS parser/clock interface — hardware tick source config, ns-resolution PPS time query
+- [lib/GnssMaxM10S/GnssMaxM10S.cpp](lib/GnssMaxM10S/GnssMaxM10S.cpp): GNSS UART polling, PPS-assisted time interpolation with EMA-calibrated 80 MHz tick rate
 - [lib/NmeaServer/NmeaServer.h](lib/NmeaServer/NmeaServer.h): TCP NMEA broadcast server (port 10110)
 - [lib/NmeaServer/NmeaServer.cpp](lib/NmeaServer/NmeaServer.cpp): NMEA server implementation
 - [lib/NtpServer/NtpServer.h](lib/NtpServer/NtpServer.h): GNSS-backed NTP server (UDP port 123)

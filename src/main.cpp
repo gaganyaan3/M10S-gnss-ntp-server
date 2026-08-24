@@ -301,6 +301,11 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
     statusOut.navSatDetails[i].azimuthDeg = navSat.satellites[i].azimuthDeg;
     statusOut.navSatDetails[i].cn0DbHz = navSat.satellites[i].cn0DbHz;
   }
+  // Prefer the detailed navSat snapshot count (can exceed 12) when valid.
+  if (navSat.valid) {
+    statusOut.satelliteCountValid = true;
+    statusOut.satelliteCount = static_cast<uint32_t>(navSat.satelliteCount);
+  }
 }
 
 void handleDisplayToggleButton(unsigned long nowMs) {
@@ -422,25 +427,37 @@ void updateCpuUtilization(uint64_t loopBusyUs) {
   }
 }
 
-void drawClockPage(const char* gpsTimeLine, const char* gpsDateLine, const char* ntpTimeLine, const char* ntpDateLine, const char* statusLine) {
+void drawClockPage(const char* gpsTimeLine, const char* gpsDateLine, const char* ntpTimeLine, const char* ntpDateLine, const char* statusLine, unsigned long satCount) {
   display.clearBuffer();
+  // Status line on top
+  display.setFont(u8g2_font_6x10_tf);
+  display.drawStr(0, 14, statusLine);
 
-  display.setFont(u8g2_font_6x13_tf);
-  display.drawStr(0, 14, "GNSS:");
-  display.setFont(u8g2_font_6x13_tf);
-  display.drawStr(28, 14, gpsTimeLine);
-  display.setFont(u8g2_font_5x7_tf);
-  display.drawStr(80, 15, gpsDateLine);
-
+  // NTP in the middle
   display.setFont(u8g2_font_6x13_tf);
   display.drawStr(0, 33, "NTP:");
   display.setFont(u8g2_font_6x13_tf);
   display.drawStr(28, 33, ntpTimeLine);
-  display.setFont(u8g2_font_5x7_tf);
-  display.drawStr(80, 34, ntpDateLine);
+  // Display satellite count after NTP time on the same line
+  display.setFont(u8g2_font_6x13_tf);
+  char satText[16];
+  snprintf(satText, sizeof(satText), "sats: %lu", satCount);
+  int ntpWidth = display.getStrWidth(ntpTimeLine);
+  int satWidth = display.getStrWidth(satText);
+  int satX = 28 + ntpWidth + 4;
+  if (satX + satWidth > 128) {
+    satX = 128 - satWidth;
+    if (satX < 0) satX = 0;
+  }
+  display.drawStr(satX, 33, satText);
 
-  display.setFont(u8g2_font_6x10_tf);
-  display.drawStr(0, 56, statusLine);
+  // GNSS at the bottom
+  display.setFont(u8g2_font_6x13_tf);
+  display.drawStr(0, 56, "GNSS:");
+  display.setFont(u8g2_font_7x13_tf);
+  display.drawStr(28, 56, gpsTimeLine);
+  display.setFont(u8g2_font_5x7_tf);
+  display.drawStr(86, 57, gpsDateLine);
 
   display.sendBuffer();
 }
@@ -649,7 +666,15 @@ void loop() {
   const bool satValid = gps.hasSatelliteCount();
   const bool hdopValid = gps.hasHdop();
   if (satValid) {
-    satCount = gps.satelliteCount();
+    // Prefer the detailed NAV-SAT/GSV snapshot (which can report >12 sats)
+    // when available; fall back to TinyGPSPlus's satellite count otherwise.
+    GnssNavSatSnapshot navSat;
+    gps.navSatSnapshot(navSat);
+    if (navSat.valid) {
+      satCount = static_cast<uint32_t>(navSat.satelliteCount);
+    } else {
+      satCount = gps.satelliteCount();
+    }
   }
   if (hdopValid) {
     hdopValue = gps.hdop();
@@ -752,7 +777,7 @@ void loop() {
   }
 
   if (displayEnabled && !showingResetHoldOverlay) {
-    drawClockPage(gpsTimeLine, gpsDateLine, ntpTimeLine, ntpDateLine, statusLine);
+    drawClockPage(gpsTimeLine, gpsDateLine, ntpTimeLine, ntpDateLine, statusLine, satCount);
   }
 
   updateCpuUtilization(micros() - loopStartUs);
