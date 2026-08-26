@@ -64,8 +64,9 @@ ntpdate -q <device-ip>
 If no valid GNSS time is available, the NTP server stays silent rather than
 replying with invalid timestamps.
 
-After first PPS-anchored GNSS time is seen since boot, optional holdover keeps
-NTP responses available if live PPS or satellite fix is temporarily lost.
+After the first fullyResolved GNSS time with gnssFixOK is seen since boot,
+optional holdover keeps NTP responses available if live PPS or satellite fix is
+temporarily lost.
 
 #### PPS-Disciplined Clock
 
@@ -100,10 +101,44 @@ New time-query API added to `GnssMaxM10S`:
 | `ppsRecentlySeen()` | Whether PPS has been seen recently enough for precise lock status |
 | `configurePpsHardwareClock(fn, hz)` | Inject custom tick source + nominal rate |
 
-Serial log format per PPS pulse:
+## PPS pulse:
+
+- So i don't have to rely on NAV-PVT once i start getting PPS signal and MCPWM gives 12.5ns accurach at 80mhz
 
 ```
-PPS pulse #N at <ticks> ticks | PPS: 1.000000000 s
+NAV-PVT: "The time is around 12:00:00.555..."
+                         ↓
+PPS:     "RIGHT HERE is exactly 12:00:01.000000000"
+                         ↓
+ESP timer counts from PPS
+                         ↓
++100 ms = 12:00:01.100000000
++500 ms = 12:00:01.500000000
++999 ms = 12:00:01.999000000
+                         ↓
+next PPS
+                         ↓
+          12:00:02.000000000
+```
+- UBX-TIM-TP
+
+```
+towMS    = 345601000
+towSubMS = 0
+qErr     = -32000 ps
+week     = 2433
+flags    = ...
+refInfo  = ...
+
+              UBX-TIM-TP
+                   │
+                   │ tells you which time
+                   │ pulse represents
+                   ↓
+PPS edge ──────────●───────────
+                   ↑
+             hardware capture
+             ESP32 timer
 ```
 
 ## GNSS Dashboard

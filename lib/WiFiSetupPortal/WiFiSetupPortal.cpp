@@ -910,7 +910,7 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
     page += F(" checked");
   }
   page += F(">"
-            "<span><strong>NTP holdover after fullyResolved and PPS</strong><span>Keep answering NTP after a fullyResolved GNSS timestamp and PPS has been obtained. NTP responses are suppressed until.</span></span></label>"
+            "<span><strong>NTP holdover after fullyResolved and gnssFixOK</strong><span>Keep answering NTP after a fullyResolved GNSS timestamp with gnssFixOK has been obtained.</span></span></label>"
             "<label class=\"toggle\"><input type=\"checkbox\" name=\"enable_stats\""
   );
   if (settings.enableStats) {

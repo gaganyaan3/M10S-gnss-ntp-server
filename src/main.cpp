@@ -98,7 +98,7 @@ unsigned long flashButtonLastEdgeMs = 0;
 unsigned long flashButtonPressedAtMs = 0;
 GpsDashboardSettings gpsDashboardSettings;
 bool ntpHoldoverValid = false;
-bool ntpPpsAnchoredSinceBoot = false;
+bool ntpGnssFixOkSinceBoot = false;
 int64_t ntpHoldoverCorrectionOffsetUs = 0;
 uint64_t ntpHoldoverBaseEpochUsUtc = 0;
 uint64_t ntpHoldoverBaseTicks = 0;
@@ -158,7 +158,6 @@ uint64_t ppsTicksToUs(uint64_t ticks) {
 }
 
 void anchorNtpHoldoverRawUs(uint64_t epochUsUtc) {
-  ntpPpsAnchoredSinceBoot = true;
   ntpHoldoverValid = true;
   ntpHoldoverBaseEpochUsUtc = epochUsUtc;
   ntpHoldoverBaseTicks = ppsCaptureNowTicks64();
@@ -271,16 +270,12 @@ bool saveGpsDashboardSettings(const GpsDashboardSettings& settings) {
 }
 
 bool gpsNavPvtCoarseEpochUs(uint64_t& epochUsUtcOut, uint32_t* receivedUsOut = nullptr) {
-  if (!gps.hasSatelliteCount() || gps.satelliteCount() == 0) {
-    return false;
-  }
-
   // Only accept the timestamp for NTP / holdover purposes when the GNSS
-  // module reports fullyResolved — meaning the UTC time is unambiguous and
-  // not just a best-effort estimate.
+  // module reports fullyResolved and gnssFixOK, meaning UTC is unambiguous
+  // and backed by a valid GNSS fix.
   GnssNavPvtData pvt;
   gps.navPvtSnapshot(pvt);
-  if (!pvt.valid || !pvt.fullyResolved) {
+  if (!pvt.valid || !pvt.fullyResolved || !pvt.gnssFixOK) {
     return false;
   }
 
@@ -385,6 +380,12 @@ bool updateCoarseCorrection(uint64_t referenceEpochUsUtc,
 }
 
 bool currentGpsNtpEpochUs(uint64_t& epochUsUtcOut) {
+  uint64_t qualifiedGnssEpochUs = 0;
+  if (!ntpGnssFixOkSinceBoot && gpsNavPvtCoarseEpochUs(qualifiedGnssEpochUs)) {
+    ntpGnssFixOkSinceBoot = true;
+    anchorNtpHoldoverUs(qualifiedGnssEpochUs);
+  }
+
   // Normal operation: NAV-PVT establishes the UTC second for the next PPS
   // edge, then PPS/hardware ticks provide the precise NTP timestamp. This also
   // covers short PPS outages by continuing from the last PPS edge with the
@@ -399,7 +400,7 @@ bool currentGpsNtpEpochUs(uint64_t& epochUsUtcOut) {
     return true;
   }
 
-  if (!ntpPpsAnchoredSinceBoot) {
+  if (!ntpGnssFixOkSinceBoot) {
     return false;
   }
 
