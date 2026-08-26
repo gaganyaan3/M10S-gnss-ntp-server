@@ -64,16 +64,30 @@ ntpdate -q <device-ip>
 If no valid GNSS time is available, the NTP server stays silent rather than
 replying with invalid timestamps.
 
-After first satellite-backed time is seen since boot, optional holdover keeps
-NTP responses available even if live satellite fix is temporarily lost.
+After first PPS-anchored GNSS time is seen since boot, optional holdover keeps
+NTP responses available if live PPS or satellite fix is temporarily lost.
 
-#### PPS-Disciplined Clock (hardware capture + EMA calibration)
+#### PPS-Disciplined Clock
 
-Time interpolation between PPS edges uses the MCPWM 80 MHz hardware capture
-counter. The measured tick interval between consecutive PPS edges is fed into
-an **exponential moving average (EMA, α = 0.1)** that continuously disciplines
-the nominal 80 MHz rate against the GPS module's own 1 Hz PPS edge — correcting
-for the ESP32 crystal's absolute frequency error (typically tens of ppm).
+The NTP server does not set or re-base its served clock directly from every
+serial NAV-PVT timestamp. NAV-PVT is used to establish and verify the UTC
+second:
+
+```text
+The next PPS edge corresponds to UTC second N.
+```
+
+Once that relationship is known, the PPS edge captured by MCPWM becomes the
+precision timing source. Between PPS edges, the server interpolates from the
+captured PPS tick using the same 80 MHz hardware counter.
+
+If PPS disappears, the server does not immediately switch to setting time from
+each NAV-PVT message. Holdover continues from the PPS-disciplined timestamp.
+When corrected NAV-PVT differs from holdover/PPS by more than the coarse
+threshold MAX_PPS_COARSE_DELTA_US,  a 60-second averaging window starts. After the window completes,
+holdover is adjusted by `avgDeltaUs / 10`, preserving microsecond correction
+instead of jumping directly to NAV-PVT. The `/gnss` dashboard shows the last
+applied correction in microseconds, and serial logs when averaging starts.
 
 New time-query API added to `GnssMaxM10S`:
 
@@ -81,14 +95,15 @@ New time-query API added to `GnssMaxM10S`:
 |---|---|
 | `currentUtcEpochPps(uint32_t&)` | Whole-second UTC epoch via PPS |
 | `currentUtcEpochMsPps(uint64_t&)` | Millisecond UTC epoch via PPS |
-| `currentUtcEpochNsPps(uint64_t&)` | **Nanosecond** UTC epoch via PPS (new) |
-| `ppsCalibratedTicksPerSecond()` | Live EMA-calibrated tick rate (Hz) |
+| `currentUtcEpochNsPps(uint64_t&)` | Nanosecond UTC epoch via PPS |
+| `navPvtUtcEpochMs(uint64_t&)` | Coarse millisecond UTC epoch from fresh, fully resolved NAV-PVT |
+| `ppsRecentlySeen()` | Whether PPS has been seen recently enough for precise lock status |
 | `configurePpsHardwareClock(fn, hz)` | Inject custom tick source + nominal rate |
 
 Serial log format per PPS pulse:
 
 ```
-PPS pulse #N at <ticks> ticks | rawS: 1.000000000 s | calibrated: 0.999999987 s | fq: 80000001.1 Hz
+PPS pulse #N at <ticks> ticks | PPS: 1.000000000 s
 ```
 
 ## GNSS Dashboard
@@ -143,12 +158,35 @@ UBX-TIM-TP
 UBX-NAV-CLOCK
 UBX-NAV-TIMEUTC
 UBX-NAV-TIMEGPS
+
+UBX-MON-RF
+    antenna status
+    jamming/interference information
+
+UTC identity valid?
+    validDate
+    validTime
+    fullyResolved
+
+Current GNSS solution valid?
+    gnssFixOK
+    fixType >= 2/3 as appropriate
+
+Current timing source healthy?
+    PPS arriving
+    PPS interval reasonable
+    recent valid GNSS information
 ```
+- should i keep the COARSE correction (µs) even if PPS is present?
+- Have 3 GNSS NAV-PVT time in microsecond with 60 second window interval GNSS1, GNSS2, GNSS3 , so for starting only it will take 3 min to set this variable, It will be in 3 holdover on 80mhz hardware timer clock, then with PPS keep these 3 values updated and avg them out by dividing 3 then use this time to server as NTP. Keep updating these values 
+- option to force update GNSS NAV-PVT time from dashboard
+- GNSS UTC Epoch (µs) on dashboard rather than direct update have avg for 60 second GNSS NAV-PVT . issue with this is dashboard value will update every 60 second. Can have holdover with eps milis()
+
 ## Project Structure
 
 - [src/main.cpp](src/main.cpp): main application loop, OLED rendering, GNSS/NTP integration, PPS hardware capture (MCPWM)
 - [lib/GnssMaxM10S/GnssMaxM10S.h](lib/GnssMaxM10S/GnssMaxM10S.h): GNSS parser/clock interface — hardware tick source config, ns-resolution PPS time query
-- [lib/GnssMaxM10S/GnssMaxM10S.cpp](lib/GnssMaxM10S/GnssMaxM10S.cpp): GNSS UART polling, PPS-assisted time interpolation with EMA-calibrated 80 MHz tick rate
+- [lib/GnssMaxM10S/GnssMaxM10S.cpp](lib/GnssMaxM10S/GnssMaxM10S.cpp): GNSS UART polling, NAV-PVT UTC-second anchoring, PPS-assisted time interpolation
 - [lib/NmeaServer/NmeaServer.h](lib/NmeaServer/NmeaServer.h): TCP NMEA broadcast server (port 10110)
 - [lib/NmeaServer/NmeaServer.cpp](lib/NmeaServer/NmeaServer.cpp): NMEA server implementation
 - [lib/NtpServer/NtpServer.h](lib/NtpServer/NtpServer.h): GNSS-backed NTP server (UDP port 123)

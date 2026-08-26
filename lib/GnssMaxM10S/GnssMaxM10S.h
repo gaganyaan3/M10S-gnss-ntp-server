@@ -21,6 +21,9 @@ struct GnssSatelliteInfo {
   int16_t elevationDeg = 0;
   int16_t azimuthDeg = 0;
   int16_t cn0DbHz = -1;
+  bool navSatFlagsValid = false;
+  uint8_t qualityInd = 0;
+  bool svUsed = false;
 };
 
 // Subset of UBX-NAV-PVT fields relevant to fix quality and time validity.
@@ -34,6 +37,12 @@ struct GnssNavPvtData {
   bool fullyResolved = false;   // valid byte 11, bit 2
   bool confirmedDate = false;   // flags2 byte 22, bit 6
   bool confirmedTime = false;   // flags2 byte 22, bit 7
+  bool utcEpochValid = false;
+  uint32_t epochUtc = 0;
+  int32_t nanoUtc = 0;           // payload bytes 16..19, signed nanosecond fraction
+  uint32_t timeAccuracyNs = 0;   // payload bytes 12..15
+  uint32_t receivedMs = 0;
+  uint32_t receivedUs = 0;
 };
 
 struct GnssNavSatSnapshot {
@@ -49,6 +58,27 @@ struct GnssNavSatSnapshot {
   uint16_t otherCount = 0;
   size_t satelliteCount = 0;
   GnssSatelliteInfo satellites[kMaxSatellites];
+};
+
+struct GnssMonRfData {
+  bool valid = false;
+  uint8_t jammingState = 0;
+  uint8_t jamInd = 0;
+  uint16_t noisePerMS = 0;
+  uint16_t agcCnt = 0;
+  uint8_t antStatus = 0;
+  uint8_t antPower = 0;
+  int8_t ofsI = 0;
+  int8_t ofsQ = 0;
+  uint8_t magI = 0;
+  uint8_t magQ = 0;
+  uint16_t agcCntAvg = 0;
+  uint8_t blockId = 0;
+  bool cfgValsetAck = false;
+  bool cfgValsetNak = false;
+  bool cfgAntAck = false;
+  bool cfgAntNak = false;
+  uint32_t receivedMs = 0;
 };
 
 struct ClockStamp {
@@ -79,13 +109,16 @@ class GnssMaxM10S {
   // instead of relying on a separately-clocked software timer.
   using TickClockFn = std::function<uint32_t()>;
   void configurePpsHardwareClock(TickClockFn nowTicksFn, uint32_t ticksPerSecond);
-  void onPpsEdge(uint32_t edgeTicks);
+  void onPpsEdge(uint32_t edgeTicks, uint32_t elapsedPulses = 1);
   ClockStamp latestUtc();
   bool currentUtcEpoch(uint32_t& epochUtcOut);
   bool currentUtcEpochMs(uint64_t& epochMsUtcOut);
   bool currentUtcEpochPps(uint32_t& epochUtcOut);
   bool currentUtcEpochMsPps(uint64_t& epochMsUtcOut);
   bool currentUtcEpochNsPps(uint64_t& epochNsUtcOut);
+  bool navPvtUtcEpochMs(uint64_t& epochMsUtcOut);
+  bool navPvtUtcEpochUs(uint64_t& epochUsUtcOut);
+  bool ppsRecentlySeen() const;
   bool isPpsAligned() const;
   uint32_t charsProcessed() const;
   bool hasSatelliteCount() const;
@@ -105,6 +138,7 @@ class GnssMaxM10S {
   double speedMps();
   void navSatSnapshot(GnssNavSatSnapshot& out) const;
   void navPvtSnapshot(GnssNavPvtData& out) const;
+  void monRfSnapshot(GnssMonRfData& out) const;
   void enableUbxLogging(bool enable);
 
  private:
@@ -112,24 +146,40 @@ class GnssMaxM10S {
   static constexpr size_t kMaxSatelliteRecords = 64;
   static constexpr size_t kMaxUbxPayloadLength = 1024;
   static constexpr uint32_t kNavSatStaleMs = 6000UL;
+  static constexpr uint32_t kSatelliteCountStaleMs = 6000UL;
+  static constexpr uint32_t kMaxPvtAgeForPpsMs = 1500UL;
+  static constexpr uint32_t kMaxPpsHoldoverMs = 30000UL;
+  static constexpr uint32_t kPpsRecentlySeenMs = 2500UL;
+  static constexpr uint32_t kMonRfStaleMs = 3000UL;
   static uint32_t toUnixUtc(int year, int month, int day, int hour, int minute, int second);
   static GnssConstellation constellationFromPrn(int prn);
   static GnssConstellation constellationFromUbxGnssId(uint8_t gnssId);
   void parseGsvSentence(const char* line);
   void parseGsaSentence(const char* line);
   void parseUbxByte(uint8_t byteValue);
+  void sendUbxCfgPrtUart1(uint32_t baudRate);
   void sendUbxCfgMsg(uint8_t msgClass, uint8_t msgId, uint8_t rate);
+  void sendUbxCfgAntSupervisor();
+  void sendUbxCfgValsetBool(const uint32_t* keys, size_t keyCount, bool value);
+  void sendUbxPoll(uint8_t msgClass, uint8_t msgId);
   void handleUbxFrame(uint8_t messageClass,
                       uint8_t messageId,
                       const uint8_t* payload,
                       uint16_t payloadLength,
                       uint32_t nowMs);
+  bool navPvtRawEpochUs(uint64_t& epochUsUtcOut) const;
+  uint64_t ppsTicksToUs(uint64_t ticks) const;
+  bool ppsEpochUsAtTicks(uint32_t ticks, uint64_t& epochUsUtcOut) const;
+  void updateNavPvtLatencyEstimate(uint32_t receivedTicks);
   void resetSatelliteRecords();
   void upsertSatellite(GnssConstellation constellation,
                        int prn,
                        int elevationDeg,
                        int azimuthDeg,
                        int cn0DbHz,
+                       bool navSatFlagsValid,
+                       uint8_t qualityInd,
+                       bool svUsed,
                        uint32_t nowMs);
   void pruneStaleSatellites(uint32_t nowMs);
 
@@ -152,6 +202,7 @@ class GnssMaxM10S {
   bool ppsHasPreviousEdge_ = false;
   uint32_t ppsReferenceEpochSec_ = 0;
   uint32_t ppsEdgeTicks_ = 0;
+  uint32_t ppsEdgeMs_ = 0;
   TickClockFn ppsNowTicksFn_ = [](){ return micros(); };
   uint32_t ppsNominalTicksPerSecond_ = 1000000UL;
   float pdop_ = 0.0f;
@@ -182,8 +233,16 @@ class GnssMaxM10S {
 
   bool ubxLoggingEnabled_ = false;
   bool statsEnabled_ = true;
+  bool navPvtLatencyUsValid_ = false;
+  uint32_t navPvtLatencyUs_ = 0;
+  uint16_t navPvtLatencySamples_ = 0;
 
   GnssNavPvtData navPvtData_ = {};
+  GnssMonRfData monRfData_ = {};
+  uint16_t monRfAgcCntSamples_[5] = {};
+  uint8_t monRfAgcCntSamplePos_ = 0;
+  uint8_t monRfAgcCntSampleCount_ = 0;
   SatelliteRecord satelliteRecords_[kMaxSatelliteRecords] = {};
   uint32_t lastNavSatUpdateMs_ = 0;
+  uint32_t lastMonRfPollMs_ = 0;
 };

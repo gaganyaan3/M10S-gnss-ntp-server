@@ -35,6 +35,71 @@ String yesNoLabel(bool value) {
   return value ? F("Yes") : F("No");
 }
 
+String antStatusLabel(uint8_t antStatus) {
+  switch (antStatus) {
+    case 0:
+      return F("INIT (0)");
+    case 1:
+      return F("DONTKNOW (1)");
+    case 2:
+      return F("OK (2)");
+    case 3:
+      return F("SHORT (3)");
+    case 4:
+      return F("OPEN (4)");
+    default:
+      return String(F("Unknown (")) + String(antStatus) + F(")");
+  }
+}
+
+String antPowerLabel(uint8_t antPower) {
+  switch (antPower) {
+    case 0:
+      return F("OFF (0)");
+    case 1:
+      return F("ON (1)");
+    case 2:
+      return F("DONTKNOW (2)");
+    default:
+      return String(F("Unknown (")) + String(antPower) + F(")");
+  }
+}
+
+String jammingStateLabel(uint8_t jammingState) {
+  switch (jammingState) {
+    case 0:
+      return F("Unknown / disabled (0)");
+    case 1:
+      return F("OK (1)");
+    case 2:
+      return F("Warning (2)");
+    case 3:
+      return F("Critical (3)");
+    default:
+      return String(F("Unknown (")) + String(jammingState) + F(")");
+  }
+}
+
+String monRfAgcStatusLabel(const GpsDashboardStatus& status) {
+  if (!status.monRfValid) {
+    return F("Unavailable");
+  }
+  const uint16_t agcCnt = status.agcCntAvg;
+  if (agcCnt > 5000) {
+    return String(F("Disconnected-")) + String(agcCnt);
+  }
+  if (agcCnt > 3000) {
+    return String(F("VLow-")) + String(agcCnt);
+  }
+  if (agcCnt > 2000) {
+    return String(F("Low-")) + String(agcCnt);
+  }
+  if (agcCnt > 1000) {
+    return String(F("OK-")) + String(agcCnt);
+  }
+  return String(F("Good-")) + String(agcCnt);
+}
+
 const char* constellationLabel(uint8_t constellation) {
   switch (constellation) {
     case 1: return "GPS";
@@ -68,7 +133,17 @@ String formatIstFromEpoch(uint32_t epochUtc) {
   gmtime_r(&istEpoch, &tmValue);
 
   char buffer[24];
-  strftime(buffer, sizeof(buffer), "%d/%m/%y %H:%M:%S IST", &tmValue);
+  strftime(buffer, sizeof(buffer), "%H:%M:%S %d/%m/%y IST", &tmValue);
+  return String(buffer);
+}
+
+String formatEpochMicros(uint64_t epochUtcMicros) {
+  char buffer[32];
+  snprintf(buffer,
+           sizeof(buffer),
+           "%llu,%06llu",
+           static_cast<unsigned long long>(epochUtcMicros / 1000000ULL),
+           static_cast<unsigned long long>(epochUtcMicros % 1000000ULL));
   return String(buffer);
 }
 
@@ -617,6 +692,7 @@ void WiFiSetupPortal::handleGpsSave() {
   settings.rawLoggingEnabled = server_.hasArg("raw_logging");
   settings.ntpHoldoverEnabled = server_.hasArg("ntp_holdover");
   settings.enableStats = server_.hasArg("enable_stats");
+  settings.enableLocation = server_.hasArg("enable_location");
   settings.displayEnabled = server_.hasArg("display_enabled");
 
   if (!gpsConfigSaver_(settings)) {
@@ -728,9 +804,13 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
                                          const GpsDashboardStatus& status) const {
   String gpsTime = F("Unavailable");
   String gpsUtcEpoch = F("Unavailable");
+  String holdoverUtcEpoch = F("Unavailable");
   if (status.gpsTimeValid) {
-    gpsTime = formatIstFromEpoch(status.gpsEpochUtc);
-    gpsUtcEpoch = String(status.gpsEpochUtc);
+    gpsTime = formatIstFromEpoch(static_cast<uint32_t>(status.gpsEpochUtcMicros / 1000000ULL));
+    gpsUtcEpoch = formatEpochMicros(status.gpsEpochUtcMicros);
+  }
+  if (status.holdoverUtcValid) {
+    holdoverUtcEpoch = formatEpochMicros(status.holdoverEpochUtcMicros);
   }
 
   String cpuText = String(status.cpuUtilizationPercent, 1) + F("% CPU");
@@ -761,6 +841,7 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
                   ".grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}"
                   ".item{background:rgba(255,255,255,0.05);border-radius:12px;padding:14px}"
                   ".label{display:block;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.56);margin-bottom:6px}"
+                  ".label .unit{text-transform:none}"
                   ".value{font-size:18px;font-weight:700;word-break:break-word}"
                   "form{display:grid;gap:14px}"
                   ".toggle{display:flex;gap:12px;align-items:flex-start;background:rgba(255,255,255,0.05);border-radius:12px;padding:14px}"
@@ -786,29 +867,36 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
   page += F("</div><div class=\"card\"><h2>Runtime Status</h2><div class=\"grid\">"
             "<div class=\"item\"><span class=\"label\">Satellites</span><span class=\"value\">");
   page += htmlEscape(satelliteCount);
-  page += F("</span></div><div class=\"item\"><span class=\"label\">Seen Satellite Since Boot</span><span class=\"value\">");
-  page += htmlEscape(yesNoLabel(status.seenSatelliteSinceBoot));
-  page += F("</span></div><div class=\"item\"><span class=\"label\">Current GNSS Time (IST)</span><span class=\"value\">");
+  page += F("</span></div><div class=\"item\"><span class=\"label\">PPS Seen Since Boot</span><span class=\"value\">");
+  page += htmlEscape(yesNoLabel(status.ppsSeenSinceBoot));
+  page += F("</span></div><div class=\"item\"><span class=\"label\">GNSS Time (IST)</span><span class=\"value\">");
   page += htmlEscape(gpsTime);
-  page += F("</span></div><div class=\"item\"><span class=\"label\">Current GNSS UTC Epoch</span><span class=\"value\">");
+  page += F("</span></div><div class=\"item\"><span class=\"label\">GNSS UTC Epoch <span class=\"unit\">(µs)</span></span><span class=\"value\">");
   page += htmlEscape(gpsUtcEpoch);
+  page += F("</span></div><div class=\"item\"><span class=\"label\">Holdover UTC <span class=\"unit\">(µs)</span></span><span class=\"value\">");
+  page += htmlEscape(holdoverUtcEpoch);
   page += F("</span></div><div class=\"item\"><span class=\"label\">NMEA Port</span><span class=\"value\">");
   page += htmlEscape(String(status.nmeaPort));
   page += F("</span></div><div class=\"item\"><span class=\"label\">NTP Port</span><span class=\"value\">");
   page += htmlEscape(String(status.ntpPort));
-  page += F("</span></div><div class=\"item\"><span class=\"label\">fullyResolved</span><span class=\"value\">");
-  page += status.navPvtFullyResolved ? F("Yes") : F("No");
+  page += F("</span></div><div class=\"item\"><span class=\"label\">NTP Ready</span><span class=\"value\">");
+  page += status.ntpReady ? F("Yes") : F("No");
   page += F("</span></div>"
             "<div class=\"item\"><span class=\"label\">PPS</span><span class=\"value\">");
-  page += status.ppsAligned ? F("Yes") : F("No");
-  page += F("</span></div>");
-  if (status.ppsPeriodValid) {
-    page += F("<div class=\"item\"><span class=\"label\">PPS Period</span><span class=\"value\">");
+  if (status.ppsAligned && status.ppsPeriodValid) {
     char ppsBuf[20];
-    snprintf(ppsBuf, sizeof(ppsBuf), "%.9f s", status.ppsPeriodSeconds);
+    snprintf(ppsBuf, sizeof(ppsBuf), "%.9f", status.ppsPeriodSeconds);
     page += htmlEscape(String(ppsBuf));
-    page += F("</span></div>");
+  } else {
+    page += F("No");
   }
+  page += F("</span></div><div class=\"item\"><span class=\"label\">COARSE Since Boot</span><span class=\"value\">");
+  page += htmlEscape(String(status.coarseEpochUseCount));
+  page += F("</span></div><div class=\"item\"><span class=\"label\">correction <span class=\"unit\">(µs)</span></span><span class=\"value\">");
+  page += htmlEscape(String(status.correctionUs));
+  page += F("</span></div><div class=\"item\"><span class=\"label\">ANTStatus-agcCnt</span><span class=\"value\">");
+  page += htmlEscape(monRfAgcStatusLabel(status));
+  page += F("</span></div>");
   page += F("</div></div>");
 
   page += F("<div class=\"card\"><h2>Saved Settings</h2><form action=\"/gnss-save\" method=\"POST\">"
@@ -822,19 +910,25 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
     page += F(" checked");
   }
   page += F(">"
-            "<span><strong>NTP holdover after fullyResolved</strong><span>Keep answering NTP after a fullyResolved GNSS timestamp has been obtained. NTP responses are suppressed until fullyResolved is true.</span></span></label>"
+            "<span><strong>NTP holdover after fullyResolved and PPS</strong><span>Keep answering NTP after a fullyResolved GNSS timestamp and PPS has been obtained. NTP responses are suppressed until.</span></span></label>"
             "<label class=\"toggle\"><input type=\"checkbox\" name=\"enable_stats\""
   );
   if (settings.enableStats) {
     page += F(" checked");
   }
-  page += F("><span><strong>Enable stats</strong><span>Enable or disable statistics collection to reduce CPU usage.</span></span></label>"
+  page += F("><span><strong>Stats enabled</strong><span>Collect GNSS statistics for the stats page.</span></span></label>"
+            "<label class=\"toggle\"><input type=\"checkbox\" name=\"enable_location\""
+  );
+  if (settings.enableLocation) {
+    page += F(" checked");
+  }
+  page += F("><span><strong>Location enabled</strong><span>Show latitude, longitude, and altitude on the stats page.</span></span></label>"
             "<label class=\"toggle\"><input type=\"checkbox\" name=\"display_enabled\""
   );
   if (settings.displayEnabled) {
     page += F(" checked");
   }
-  page += F("><span><strong>Display enabled</strong><span>Turn the OLED display on or off. This uses the same EEPROM preference as the FLASH button.</span></span></label>"
+  page += F("><span><strong>Display enabled</strong><span>Turn the OLED display on or off.</span></span></label>"
             "<button type=\"submit\">Save</button>"
             "<div class=\"banner\" id=\"save-banner\" style=\"display:none\">GPS settings saved to EEPROM.</div>"
             "<script>(function(){"
@@ -852,17 +946,23 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
 
 String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
   String latitudeText = F("--");
-  if (status.latitudeValid) {
+  if (!status.locationEnabled) {
+    latitudeText = F("***");
+  } else if (status.latitudeValid) {
     latitudeText = String(status.latitude, 6);
   }
 
   String longitudeText = F("--");
-  if (status.longitudeValid) {
+  if (!status.locationEnabled) {
+    longitudeText = F("***");
+  } else if (status.longitudeValid) {
     longitudeText = String(status.longitude, 6);
   }
 
   String altitudeText = F("--");
-  if (status.altitudeValid) {
+  if (!status.locationEnabled) {
+    altitudeText = F("***");
+  } else if (status.altitudeValid) {
     altitudeText = String(status.altitudeMeters, 1) + F(" m");
   }
 
@@ -875,9 +975,6 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
   if (status.hdopValid) {
     hdopText = String(status.hdop, 1);
   }
-
-  String navPvtStatus = status.navPvtValid ? F("Valid") : F("No fix");
-  String navSatStatus = status.navSatValid ? F("Valid") : F("Waiting for GSV data");
 
   // fixType human-readable label (u-blox interface spec, table UBX-NAV-PVT)
   const char* fixTypeLabels[] = {
@@ -928,7 +1025,7 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
                     "border-radius:12px;padding:14px;color:#fff;font-size:16px;font-weight:700;cursor:pointer}"
                   ".count-btn:hover{background:rgba(255,255,255,0.1)}"
                   ".details-help{margin-top:10px;font-size:13px;color:rgba(255,255,255,0.68)}"
-                  ".details-group{display:none;gap:10px;grid-template-columns:1fr}"
+                  ".details-group{display:none;gap:10px;grid-template-columns:1fr;margin-top:12px}"
                   ".details-group.active{display:grid}"
                   ".sat-item{background:rgba(255,255,255,0.05);border-radius:12px;padding:14px;line-height:1.5}"
                   ".sat-title{font-size:17px;font-weight:700;margin-bottom:4px}"
@@ -939,10 +1036,7 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
                   "<p class=\"lead\">Live navigation snapshot rendered with the GNSS Config Dashboard theme.</p>"
                   "<a class=\"action\" href=\"/gnss\">Back to GNSS Config Dashboard</a>"
                   "</div><div class=\"card\"><h2>UBX-NAV-PVT</h2><div class=\"grid\">"
-                  "<div class=\"item\"><span class=\"label\">NAV-PVT</span><span class=\"value\">");
-
-  page += htmlEscape(navPvtStatus);
-  page += F("</span></div><div class=\"item\"><span class=\"label\">Latitude</span><span class=\"value\">");
+                  "<div class=\"item\"><span class=\"label\">Latitude</span><span class=\"value\">");
   page += htmlEscape(latitudeText);
   page += F("</span></div><div class=\"item\"><span class=\"label\">Longitude</span><span class=\"value\">");
   page += htmlEscape(longitudeText);
@@ -979,6 +1073,31 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
   page += status.navPvtConfirmedTime ? F("Yes") : F("No");
   page += F("</span></div></div></div>");
 
+  page += F("<div class=\"card\"><h2>UBX-MON-RF</h2><div class=\"grid\">"
+            "<div class=\"item\"><span class=\"label\">ANTStatus-agcCnt</span><span class=\"value\">");
+  page += htmlEscape(status.monRfValid ? monRfAgcStatusLabel(status) : String(F("--")));
+  page += F("</span></div><div class=\"item\"><span class=\"label\">magI</span><span class=\"value\">");
+  page += htmlEscape(status.monRfValid ? String(status.magI) : String(F("--")));
+  page += F("</span></div><div class=\"item\"><span class=\"label\">magQ</span><span class=\"value\">");
+  page += htmlEscape(status.monRfValid ? String(status.magQ) : String(F("--")));
+  page += F("</span></div><div class=\"item\"><span class=\"label\">jammingState</span><span class=\"value\">");
+  page += htmlEscape(status.monRfValid ? jammingStateLabel(status.jammingState) : String(F("--")));
+  page += F("</span></div><div class=\"item\"><span class=\"label\">jamInd</span><span class=\"value\">");
+  page += htmlEscape(status.monRfValid ? String(status.jamInd) : String(F("--")));
+  page += F("</span></div><div class=\"item\"><span class=\"label\">noisePerMS</span><span class=\"value\">");
+  page += htmlEscape(status.monRfValid ? String(status.noisePerMS) : String(F("--")));
+  page += F("</span></div><div class=\"item\"><span class=\"label\">agcCnt</span><span class=\"value\">");
+  page += htmlEscape(status.monRfValid ? String(status.agcCnt) : String(F("--")));
+  page += F("</span></div><div class=\"item\"><span class=\"label\">antStatus</span><span class=\"value\">");
+  page += htmlEscape(status.monRfValid ? antStatusLabel(status.antStatus) : String(F("--")));
+  page += F("</span></div><div class=\"item\"><span class=\"label\">antPower</span><span class=\"value\">");
+  page += htmlEscape(status.monRfValid ? antPowerLabel(status.antPower) : String(F("--")));
+  page += F("</span></div><div class=\"item\"><span class=\"label\">ofsI</span><span class=\"value\">");
+  page += htmlEscape(status.monRfValid ? String(status.ofsI) : String(F("--")));
+  page += F("</span></div><div class=\"item\"><span class=\"label\">ofsQ</span><span class=\"value\">");
+  page += htmlEscape(status.monRfValid ? String(status.ofsQ) : String(F("--")));
+  page += F("</span></div></div></div>");
+
   page += F("<div class=\"card\"><h2>UBX-NAV-SAT</h2><div class=\"grid\">");
   for (size_t i = 0; i < sizeof(counts) / sizeof(counts[0]); ++i) {
     const String label = String(constellationLabel(counts[i].constellation));
@@ -992,12 +1111,8 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
     page += F("</button>");
   }
   page += F("</div><div class=\"details-help\">Tap a constellation count to view all satellite details.</div>");
-  page += F("<div class=\"item\" style=\"margin-top:12px\"><span class=\"label\">NAV-SAT Status</span><span class=\"value\">");
-  page += htmlEscape(navSatStatus);
-  page += F("</span></div></div>");
 
   const uint8_t constellations[] = {1, 2, 3, 4, 5, 6, 7};
-  page += F("<div class=\"card\"><h2>Satellite Details</h2>");
   for (size_t c = 0; c < sizeof(constellations) / sizeof(constellations[0]); ++c) {
     const String domId = String(constellationDomId(constellations[c]));
     page += F("<div class=\"details-group\" id=\"sat-");
@@ -1026,6 +1141,18 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
       } else {
         page += F("--");
       }
+      page += F("</div><div>qualityInd: ");
+      if (detail.navSatFlagsValid) {
+        page += htmlEscape(String(detail.qualityInd));
+      } else {
+        page += F("--");
+      }
+      page += F("</div><div>svUsed: ");
+      if (detail.navSatFlagsValid) {
+        page += F(detail.svUsed ? "Yes" : "No");
+      } else {
+        page += F("--");
+      }
       page += F("</div></div>");
     }
 
@@ -1046,7 +1173,6 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
             "buttons.forEach(function(btn){"
             "btn.addEventListener('click',function(){openGroup(btn.dataset.target);});"
             "});"
-            "openGroup('gps');"
             "})();</script>");
 
   page += F("</div></div></body></html>");

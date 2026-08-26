@@ -9,6 +9,10 @@ int parseIntToken(const String& token, int fallback) {
   return token.toInt();
 }
 
+bool isNmeaTextByte(uint8_t byteValue) {
+  return byteValue >= 0x20 && byteValue <= 0x7E;
+}
+
 }  // namespace
 
 GnssMaxM10S::GnssMaxM10S(uint8_t rxPin,
@@ -38,49 +42,209 @@ void GnssMaxM10S::sendUbxCfgMsg(uint8_t msgClass, uint8_t msgId, uint8_t rate) {
   serial_.flush();
 }
 
+void GnssMaxM10S::sendUbxPoll(uint8_t msgClass, uint8_t msgId) {
+  uint8_t ckA = 0, ckB = 0;
+  const uint8_t header[4] = {msgClass, msgId, 0, 0};
+  for (uint8_t b : header) { ckA += b; ckB += ckA; }
+
+  serial_.write(0xB5);
+  serial_.write(0x62);
+  serial_.write(header, 4);
+  serial_.write(ckA);
+  serial_.write(ckB);
+  serial_.flush();
+}
+
+void GnssMaxM10S::sendUbxCfgValsetBool(const uint32_t* keys, size_t keyCount, bool value) {
+  if (keys == nullptr || keyCount == 0) {
+    return;
+  }
+
+  uint8_t payload[64] = {};
+  size_t payloadLength = 4;
+  payload[0] = 0x00;  // version
+  payload[1] = 0x01;  // RAM layer
+  payload[2] = 0x00;  // transaction
+  payload[3] = 0x00;  // reserved
+
+  for (size_t i = 0; i < keyCount && payloadLength + 5 <= sizeof(payload); ++i) {
+    const uint32_t key = keys[i];
+    payload[payloadLength++] = static_cast<uint8_t>(key & 0xFF);
+    payload[payloadLength++] = static_cast<uint8_t>((key >> 8) & 0xFF);
+    payload[payloadLength++] = static_cast<uint8_t>((key >> 16) & 0xFF);
+    payload[payloadLength++] = static_cast<uint8_t>((key >> 24) & 0xFF);
+    payload[payloadLength++] = value ? 1 : 0;
+  }
+
+  uint8_t ckA = 0, ckB = 0;
+  const uint8_t header[4] = {
+      0x06,
+      0x8A,
+      static_cast<uint8_t>(payloadLength & 0xFF),
+      static_cast<uint8_t>((payloadLength >> 8) & 0xFF),
+  };
+  for (uint8_t b : header) { ckA += b; ckB += ckA; }
+  for (size_t i = 0; i < payloadLength; ++i) { ckA += payload[i]; ckB += ckA; }
+
+  serial_.write(0xB5);
+  serial_.write(0x62);
+  serial_.write(header, 4);
+  serial_.write(payload, payloadLength);
+  serial_.write(ckA);
+  serial_.write(ckB);
+  serial_.flush();
+}
+
+void GnssMaxM10S::sendUbxCfgAntSupervisor() {
+  // Legacy UBX-CFG-ANT. This is deprecated on M10 but still accepted by many
+  // firmware builds, and explicitly reconfigures the default antenna supervisor
+  // pins: ANT_OFF_N=PIO7, ANT_SHORT_N=PIO6, ANT_DETECT=PIO5.
+  constexpr uint16_t flags =
+      (1U << 0) |  // svcs: supply voltage control
+      (1U << 1) |  // scd: short circuit detection
+      (1U << 2) |  // ocd: open circuit detection
+      (1U << 4);   // recovery: automatic short recovery
+  constexpr uint16_t pins =
+      7U |          // pinSwitch
+      (6U << 5) |   // pinSCD
+      (5U << 10) |  // pinOCD
+      (1U << 15);   // reconfig
+  const uint8_t payload[4] = {
+      static_cast<uint8_t>(flags & 0xFF),
+      static_cast<uint8_t>((flags >> 8) & 0xFF),
+      static_cast<uint8_t>(pins & 0xFF),
+      static_cast<uint8_t>((pins >> 8) & 0xFF),
+  };
+
+  uint8_t ckA = 0, ckB = 0;
+  const uint8_t header[4] = {0x06, 0x13, 4, 0};
+  for (uint8_t b : header) { ckA += b; ckB += ckA; }
+  for (uint8_t b : payload) { ckA += b; ckB += ckA; }
+
+  serial_.write(0xB5);
+  serial_.write(0x62);
+  serial_.write(header, 4);
+  serial_.write(payload, sizeof(payload));
+  serial_.write(ckA);
+  serial_.write(ckB);
+  serial_.flush();
+}
+
+void GnssMaxM10S::sendUbxCfgPrtUart1(uint32_t baudRate) {
+  // UBX-CFG-PRT for UART1. Keep both UBX and NMEA enabled; only raise the
+  // baud rate so NAV-SAT/NAV-PVT cannot sit behind seconds of 9600-baud text.
+  uint8_t payload[20] = {};
+  payload[0] = 1;  // portID: UART1
+  payload[4] = 0xD0;
+  payload[5] = 0x08;  // 8N1
+  payload[8] = static_cast<uint8_t>(baudRate & 0xFF);
+  payload[9] = static_cast<uint8_t>((baudRate >> 8) & 0xFF);
+  payload[10] = static_cast<uint8_t>((baudRate >> 16) & 0xFF);
+  payload[11] = static_cast<uint8_t>((baudRate >> 24) & 0xFF);
+  payload[12] = 0x03;  // inProtoMask: UBX + NMEA
+  payload[14] = 0x03;  // outProtoMask: UBX + NMEA
+
+  uint8_t ckA = 0, ckB = 0;
+  const uint8_t header[4] = {0x06, 0x00, 20, 0};
+  for (uint8_t b : header) { ckA += b; ckB += ckA; }
+  for (uint8_t b : payload) { ckA += b; ckB += ckA; }
+
+  serial_.write(0xB5);
+  serial_.write(0x62);
+  serial_.write(header, 4);
+  serial_.write(payload, sizeof(payload));
+  serial_.write(ckA);
+  serial_.write(ckB);
+  serial_.flush();
+}
+
 void GnssMaxM10S::begin() {
-  serial_.begin(baud_, SERIAL_8N1, rxPin_, txPin_);
+  constexpr uint32_t kDefaultBootBaud = 9600;
+  serial_.begin(kDefaultBootBaud, SERIAL_8N1, rxPin_, txPin_);
   // Allow the module a moment to finish its boot NMEA burst before we send
   // configuration commands (the MAX-M10S needs ~100 ms after power-on).
   delay(200);
+  if (baud_ != kDefaultBootBaud) {
+    sendUbxCfgPrtUart1(baud_);
+    delay(100);
+    serial_.updateBaudRate(baud_);
+    delay(100);
+  }
   sendUbxCfgMsg(0x01, 0x07, 1);  // Enable UBX-NAV-PVT  on UART1
   sendUbxCfgMsg(0x01, 0x35, 1);  // Enable UBX-NAV-SAT  on UART1
+  sendUbxCfgMsg(0x0A, 0x38, 1);  // Enable UBX-MON-RF   on UART1
+  const uint32_t antennaSupervisorKeys[] = {
+      0x10A3002E,  // CFG-HW-ANT_CFG_VOLTCTRL
+      0x10A3002F,  // CFG-HW-ANT_CFG_SHORTDET
+      0x10A30031,  // CFG-HW-ANT_CFG_OPENDET
+  };
+  sendUbxCfgValsetBool(antennaSupervisorKeys,
+                       sizeof(antennaSupervisorKeys) / sizeof(antennaSupervisorKeys[0]),
+                       true);
+  sendUbxCfgAntSupervisor();
+  sendUbxPoll(0x0A, 0x38);        // Poll once for receivers that don't stream MON-RF
 }
 
 void GnssMaxM10S::poll() {
+  const uint32_t nowMs = millis();
+  constexpr uint32_t kMonRfPollIntervalMs = 1000UL;
+  if (nowMs - lastMonRfPollMs_ >= kMonRfPollIntervalMs) {
+    lastMonRfPollMs_ = nowMs;
+    sendUbxPoll(0x0A, 0x38);
+  }
+
   while (serial_.available() > 0) {
     const uint8_t byteValue = static_cast<uint8_t>(serial_.read());
     const char c = static_cast<char>(byteValue);
     parseUbxByte(byteValue);
 
+    if (c == '$') {
+      rawLineBufferLength_ = 0;
+      rawLineBuffer_[rawLineBufferLength_++] = c;
+      rawLineBuffer_[rawLineBufferLength_] = '\0';
+      gps_.encode(c);
+      continue;
+    }
+
+    if (rawLineBufferLength_ == 0 || rawLineBuffer_[0] != '$') {
+      continue;
+    }
+
     if (c == '\n') {
       if (rawLineBufferLength_ > 0) {
         rawLineBuffer_[rawLineBufferLength_] = '\0';
-        if (rawLineBuffer_[0] == '$') {
-          // Parse GSA for dilution values and GSV for per-satellite records
-          // only when stats collection is enabled to avoid unnecessary CPU work.
-          if (statsEnabled_) {
-            parseGsaSentence(rawLineBuffer_);
-            parseGsvSentence(rawLineBuffer_);
-          }
-          if (rawLoggingEnabled_) {
-            Serial.print("RAW: ");
-            Serial.println(rawLineBuffer_);
-          }
-          if (rawLineCallback_) {
-            rawLineCallback_(String(rawLineBuffer_));
-          }
+        // Parse GSA for dilution values and GSV for per-satellite records
+        // only when stats collection is enabled to avoid unnecessary CPU work.
+        if (statsEnabled_) {
+          parseGsaSentence(rawLineBuffer_);
+          parseGsvSentence(rawLineBuffer_);
+        }
+        if (rawLoggingEnabled_) {
+          Serial.print("RAW: ");
+          Serial.println(rawLineBuffer_);
+        }
+        if (rawLineCallback_) {
+          rawLineCallback_(String(rawLineBuffer_));
         }
       }
       rawLineBufferLength_ = 0;
       rawLineBuffer_[0] = '\0';
+      gps_.encode(c);
     } else if (c != '\r') {
-      if (rawLineBufferLength_ < (kMaxRawLineLength - 1)) {
+      if (!isNmeaTextByte(byteValue)) {
+        rawLineBufferLength_ = 0;
+        rawLineBuffer_[0] = '\0';
+      } else if (rawLineBufferLength_ < (kMaxRawLineLength - 1)) {
         rawLineBuffer_[rawLineBufferLength_++] = c;
         rawLineBuffer_[rawLineBufferLength_] = '\0';
+        gps_.encode(c);
+      } else {
+        rawLineBufferLength_ = 0;
+        rawLineBuffer_[0] = '\0';
       }
+    } else {
+      gps_.encode(c);
     }
-    gps_.encode(c);
   }
 }
 
@@ -105,36 +269,35 @@ void GnssMaxM10S::configurePpsHardwareClock(TickClockFn nowTicksFn, uint32_t tic
   ppsNominalTicksPerSecond_ = (ticksPerSecond > 0) ? ticksPerSecond : 1000000UL;
 }
 
-void GnssMaxM10S::onPpsEdge(uint32_t edgeTicks) {
-  if (!gps_.date.isValid() || !gps_.time.isValid()) {
-    ppsAligned_ = false;
+void GnssMaxM10S::onPpsEdge(uint32_t edgeTicks, uint32_t elapsedPulses) {
+  if (elapsedPulses == 0) {
+    elapsedPulses = 1;
+  }
+
+  const bool pvtCanAnchorPps =
+      navPvtData_.valid &&
+      navPvtData_.utcEpochValid &&
+      navPvtData_.validDate &&
+      navPvtData_.validTime &&
+      navPvtData_.fullyResolved &&
+      (millis() - navPvtData_.receivedMs <= kMaxPvtAgeForPpsMs);
+
+  if (pvtCanAnchorPps) {
+    // NAV-PVT gives the coarse UTC second from the serial time solution. The
+    // next captured PPS edge starts the next UTC second; elapsedPulses keeps
+    // that association correct even if the main loop was blocked briefly.
+    ppsReferenceEpochSec_ = navPvtData_.epochUtc + elapsedPulses;
+  } else if (ppsAligned_) {
+    // Once anchored, PPS remains the precision source. A late/missing PVT
+    // frame should not break lock; each captured PPS advances exactly 1 second.
+    ppsReferenceEpochSec_ += elapsedPulses;
+  } else {
     ppsHasPreviousEdge_ = false;
     return;
   }
 
-  // Guard against stale NMEA data. The PPS rising edge marks the start of the
-  // *next* second, so the NMEA sentence for the *current* second must have
-  // already been received and parsed. On a 9600 baud link that normally happens
-  // within ~50–100 ms of the sentence start, well before the PPS edge. If the
-  // age is older than ~1.2 s the parser has likely missed a sentence (e.g. due
-  // to a signal dropout), meaning baseEpoch would be off by at least 1 second.
-  constexpr uint32_t MAX_NMEA_AGE_MS = 1200UL;
-  if (gps_.time.age() > MAX_NMEA_AGE_MS) {
-    ppsAligned_ = false;
-    ppsHasPreviousEdge_ = false;
-    return;
-  }
-
-  const uint32_t baseEpoch = toUnixUtc(
-      gps_.date.year(),
-      gps_.date.month(),
-      gps_.date.day(),
-      gps_.time.hour(),
-      gps_.time.minute(),
-      gps_.time.second());
-
-  ppsReferenceEpochSec_ = baseEpoch + 1UL;
   ppsEdgeTicks_ = edgeTicks;
+  ppsEdgeMs_ = millis();
   ppsAligned_ = true;
   ppsHasPreviousEdge_ = true;
 }
@@ -209,12 +372,13 @@ bool GnssMaxM10S::currentUtcEpochPps(uint32_t& epochUtcOut) {
   if (!ppsAligned_) {
     return false;
   }
+  if (millis() - ppsEdgeMs_ > kMaxPpsHoldoverMs) {
+    return false;
+  }
 
   const uint32_t nowTicks = ppsNowTicksFn_();
   const uint32_t elapsedTicks = nowTicks - ppsEdgeTicks_;
-  const double elapsedSeconds = static_cast<double>(elapsedTicks) /
-                                static_cast<double>(ppsNominalTicksPerSecond_);
-  epochUtcOut = ppsReferenceEpochSec_ + static_cast<uint32_t>(elapsedSeconds);
+  epochUtcOut = ppsReferenceEpochSec_ + (elapsedTicks / ppsNominalTicksPerSecond_);
   return true;
 }
 
@@ -231,17 +395,147 @@ bool GnssMaxM10S::currentUtcEpochNsPps(uint64_t& epochNsUtcOut) {
   if (!ppsAligned_) {
     return false;
   }
+  if (millis() - ppsEdgeMs_ > kMaxPpsHoldoverMs) {
+    return false;
+  }
 
   const uint32_t nowTicks = ppsNowTicksFn_();
   const uint32_t elapsedTicks = nowTicks - ppsEdgeTicks_;
-  const double elapsedSeconds = static_cast<double>(elapsedTicks) /
-                                static_cast<double>(ppsNominalTicksPerSecond_);
-  const uint64_t wholeSeconds = static_cast<uint64_t>(elapsedSeconds);
-  const double subSecondSeconds = elapsedSeconds - static_cast<double>(wholeSeconds);
-  const uint64_t subSecondNs = static_cast<uint64_t>(subSecondSeconds * 1000000000.0 + 0.5);
+  const uint64_t wholeSeconds = elapsedTicks / ppsNominalTicksPerSecond_;
+  const uint64_t remainderTicks = elapsedTicks % ppsNominalTicksPerSecond_;
+  const uint64_t subSecondNs =
+      (remainderTicks * 1000000000ULL) / ppsNominalTicksPerSecond_;
 
   epochNsUtcOut = (static_cast<uint64_t>(ppsReferenceEpochSec_) + wholeSeconds) * 1000000000ULL + subSecondNs;
   return true;
+}
+
+bool GnssMaxM10S::navPvtRawEpochUs(uint64_t& epochUsUtcOut) const {
+  if (!navPvtData_.valid ||
+      !navPvtData_.utcEpochValid ||
+      !navPvtData_.validDate ||
+      !navPvtData_.validTime ||
+      !navPvtData_.fullyResolved) {
+    return false;
+  }
+
+  int64_t epochSec = static_cast<int64_t>(navPvtData_.epochUtc);
+  int64_t nano = static_cast<int64_t>(navPvtData_.nanoUtc);
+  while (nano < 0) {
+    nano += 1000000000LL;
+    --epochSec;
+  }
+  while (nano >= 1000000000LL) {
+    nano -= 1000000000LL;
+    ++epochSec;
+  }
+
+  if (epochSec < 0) {
+    return false;
+  }
+
+  epochUsUtcOut = static_cast<uint64_t>(epochSec) * 1000000ULL +
+                  static_cast<uint64_t>(nano / 1000LL);
+  return true;
+}
+
+uint64_t GnssMaxM10S::ppsTicksToUs(uint64_t ticks) const {
+  return (ticks / ppsNominalTicksPerSecond_) * 1000000ULL +
+         ((ticks % ppsNominalTicksPerSecond_) * 1000000ULL) / ppsNominalTicksPerSecond_;
+}
+
+bool GnssMaxM10S::ppsEpochUsAtTicks(uint32_t ticks, uint64_t& epochUsUtcOut) const {
+  if (!ppsAligned_) {
+    return false;
+  }
+  if (millis() - ppsEdgeMs_ > kMaxPpsHoldoverMs) {
+    return false;
+  }
+
+  const uint32_t elapsedTicks = ticks - ppsEdgeTicks_;
+  epochUsUtcOut = static_cast<uint64_t>(ppsReferenceEpochSec_) * 1000000ULL +
+                  ppsTicksToUs(elapsedTicks);
+  return true;
+}
+
+void GnssMaxM10S::updateNavPvtLatencyEstimate(uint32_t receivedTicks) {
+  if (millis() - ppsEdgeMs_ > kPpsRecentlySeenMs) {
+    return;
+  }
+
+  uint64_t rawNavPvtEpochUs = 0;
+  uint64_t ppsEpochUs = 0;
+  if (!navPvtRawEpochUs(rawNavPvtEpochUs) ||
+      !ppsEpochUsAtTicks(receivedTicks, ppsEpochUs)) {
+    return;
+  }
+
+  const int64_t latencyUs = static_cast<int64_t>(ppsEpochUs) -
+                            static_cast<int64_t>(rawNavPvtEpochUs);
+  constexpr int64_t MIN_NAV_PVT_LATENCY_US = 0;
+  constexpr int64_t MAX_NAV_PVT_LATENCY_US = 950000;
+  if (latencyUs < MIN_NAV_PVT_LATENCY_US || latencyUs > MAX_NAV_PVT_LATENCY_US) {
+    return;
+  }
+
+  if (!navPvtLatencyUsValid_) {
+    navPvtLatencyUs_ = static_cast<uint32_t>(latencyUs);
+    navPvtLatencyUsValid_ = true;
+  } else {
+    navPvtLatencyUs_ = (navPvtLatencyUs_ * 7UL + static_cast<uint32_t>(latencyUs) + 4UL) / 8UL;
+  }
+
+  if (navPvtLatencySamples_ < UINT16_MAX) {
+    ++navPvtLatencySamples_;
+  }
+}
+
+bool GnssMaxM10S::navPvtUtcEpochMs(uint64_t& epochMsUtcOut) {
+  if (!navPvtData_.valid ||
+      !navPvtData_.utcEpochValid ||
+      !navPvtData_.validDate ||
+      !navPvtData_.validTime ||
+      !navPvtData_.fullyResolved) {
+    return false;
+  }
+
+  const uint32_t ageMs = millis() - navPvtData_.receivedMs;
+  constexpr uint32_t MAX_PVT_AGE_MS = 5000UL;
+  if (ageMs > MAX_PVT_AGE_MS) {
+    return false;
+  }
+
+  uint64_t rawEpochUsUtc = 0;
+  if (!navPvtRawEpochUs(rawEpochUsUtc)) {
+    return false;
+  }
+
+  epochMsUtcOut = (rawEpochUsUtc +
+                   static_cast<uint64_t>(navPvtLatencyUsValid_ ? navPvtLatencyUs_ : 0UL) +
+                   static_cast<uint64_t>(ageMs) * 1000ULL) / 1000ULL;
+  return true;
+}
+
+bool GnssMaxM10S::navPvtUtcEpochUs(uint64_t& epochUsUtcOut) {
+  const uint32_t ageUs = micros() - navPvtData_.receivedUs;
+  constexpr uint32_t MAX_PVT_AGE_MS = 5000UL;
+  if (ageUs > MAX_PVT_AGE_MS * 1000UL) {
+    return false;
+  }
+
+  uint64_t rawEpochUsUtc = 0;
+  if (!navPvtRawEpochUs(rawEpochUsUtc)) {
+    return false;
+  }
+
+  epochUsUtcOut = rawEpochUsUtc +
+                  static_cast<uint64_t>(navPvtLatencyUsValid_ ? navPvtLatencyUs_ : 0UL) +
+                  static_cast<uint64_t>(ageUs);
+  return true;
+}
+
+bool GnssMaxM10S::ppsRecentlySeen() const {
+  return ppsAligned_ && (millis() - ppsEdgeMs_ <= kPpsRecentlySeenMs);
 }
 
 bool GnssMaxM10S::isPpsAligned() const {
@@ -253,7 +547,8 @@ uint32_t GnssMaxM10S::charsProcessed() const {
 }
 
 bool GnssMaxM10S::hasSatelliteCount() const {
-  return gps_.satellites.isValid();
+  return gps_.satellites.isValid() &&
+         gps_.satellites.age() <= kSatelliteCountStaleMs;
 }
 
 uint32_t GnssMaxM10S::satelliteCount() {
@@ -361,6 +656,13 @@ void GnssMaxM10S::navSatSnapshot(GnssNavSatSnapshot& out) const {
 
 void GnssMaxM10S::navPvtSnapshot(GnssNavPvtData& out) const {
   out = navPvtData_;
+}
+
+void GnssMaxM10S::monRfSnapshot(GnssMonRfData& out) const {
+  out = monRfData_;
+  if (out.valid && millis() - out.receivedMs > kMonRfStaleMs) {
+    out.valid = false;
+  }
 }
 
 GnssConstellation GnssMaxM10S::constellationFromUbxGnssId(uint8_t gnssId) {
@@ -491,8 +793,65 @@ void GnssMaxM10S::handleUbxFrame(uint8_t messageClass,
     Serial.println();
   }
   constexpr uint8_t UBX_CLASS_NAV = 0x01;
+  constexpr uint8_t UBX_CLASS_ACK = 0x05;
+  constexpr uint8_t UBX_CLASS_MON = 0x0A;
   constexpr uint8_t UBX_ID_NAV_PVT = 0x07;
   constexpr uint8_t UBX_ID_NAV_SAT = 0x35;
+  constexpr uint8_t UBX_ID_MON_RF = 0x38;
+
+  // ---- UBX-ACK-ACK / UBX-ACK-NAK ----------------------------------------
+  if (messageClass == UBX_CLASS_ACK && payloadLength >= 2) {
+    const bool isAck = messageId == 0x01;
+    const bool isNak = messageId == 0x00;
+    if (!isAck && !isNak) {
+      return;
+    }
+    const uint8_t ackClass = payload[0];
+    const uint8_t ackId = payload[1];
+    if (ackClass == 0x06 && ackId == 0x8A) {
+      monRfData_.cfgValsetAck = isAck;
+      monRfData_.cfgValsetNak = isNak;
+    } else if (ackClass == 0x06 && ackId == 0x13) {
+      monRfData_.cfgAntAck = isAck;
+      monRfData_.cfgAntNak = isNak;
+    }
+    return;
+  }
+
+  // ---- UBX-MON-RF (0x0A / 0x38) -----------------------------------------
+  if (messageClass == UBX_CLASS_MON && messageId == UBX_ID_MON_RF && payloadLength >= 4) {
+    const uint8_t nBlocks = payload[1];
+    if (nBlocks > 0 && payloadLength >= 28) {
+      monRfData_.blockId = payload[4];
+      monRfData_.jammingState = payload[5] & 0x03;
+      monRfData_.antStatus = payload[6];
+      monRfData_.antPower = payload[7];
+      monRfData_.noisePerMS = static_cast<uint16_t>(payload[16]) |
+                              (static_cast<uint16_t>(payload[17]) << 8);
+      monRfData_.agcCnt = static_cast<uint16_t>(payload[18]) |
+                          (static_cast<uint16_t>(payload[19]) << 8);
+      monRfData_.jamInd = payload[20];
+      monRfData_.ofsI = static_cast<int8_t>(payload[21]);
+      monRfData_.magI = payload[22];
+      monRfData_.ofsQ = static_cast<int8_t>(payload[23]);
+      monRfData_.magQ = payload[24];
+      monRfAgcCntSamples_[monRfAgcCntSamplePos_] = monRfData_.agcCnt;
+      monRfAgcCntSamplePos_ =
+          (monRfAgcCntSamplePos_ + 1) % (sizeof(monRfAgcCntSamples_) / sizeof(monRfAgcCntSamples_[0]));
+      if (monRfAgcCntSampleCount_ < sizeof(monRfAgcCntSamples_) / sizeof(monRfAgcCntSamples_[0])) {
+        ++monRfAgcCntSampleCount_;
+      }
+      uint16_t agcCntSum = 0;
+      for (uint8_t i = 0; i < monRfAgcCntSampleCount_; ++i) {
+        agcCntSum += monRfAgcCntSamples_[i];
+      }
+      monRfData_.agcCntAvg =
+          (agcCntSum + (monRfAgcCntSampleCount_ / 2U)) / monRfAgcCntSampleCount_;
+      monRfData_.receivedMs = nowMs;
+      monRfData_.valid = true;
+    }
+    return;
+  }
 
   if (messageClass != UBX_CLASS_NAV) {
     return;
@@ -508,7 +867,24 @@ void GnssMaxM10S::handleUbxFrame(uint8_t messageClass,
   // ---- UBX-NAV-PVT (0x01 / 0x07) ----------------------------------------
   // Payload must be at least 23 bytes to reach flags2 (byte 22).
   if (messageId == UBX_ID_NAV_PVT && payloadLength >= 23) {
+    const uint16_t year = static_cast<uint16_t>(payload[4]) |
+                          (static_cast<uint16_t>(payload[5]) << 8);
+    const uint8_t month = payload[6];
+    const uint8_t day = payload[7];
+    const uint8_t hour = payload[8];
+    const uint8_t minute = payload[9];
+    const uint8_t second = payload[10];
     const uint8_t validByte  = payload[11];   // validity flags
+    const uint32_t timeAccuracyNs =
+        static_cast<uint32_t>(payload[12]) |
+        (static_cast<uint32_t>(payload[13]) << 8) |
+        (static_cast<uint32_t>(payload[14]) << 16) |
+        (static_cast<uint32_t>(payload[15]) << 24);
+    const int32_t nanoUtc = static_cast<int32_t>(
+        static_cast<uint32_t>(payload[16]) |
+        (static_cast<uint32_t>(payload[17]) << 8) |
+        (static_cast<uint32_t>(payload[18]) << 16) |
+        (static_cast<uint32_t>(payload[19]) << 24));
     const uint8_t fixTypeByte = payload[20];  // fix type
     const uint8_t flagsByte  = payload[21];   // gnssFixOK etc.
     const uint8_t flags2Byte = payload[22];   // confirmedDate/Time
@@ -520,7 +896,30 @@ void GnssMaxM10S::handleUbxFrame(uint8_t messageClass,
     navPvtData_.fullyResolved = (validByte  & 0x04) != 0;
     navPvtData_.confirmedDate = (flags2Byte & 0x40) != 0;
     navPvtData_.confirmedTime = (flags2Byte & 0x80) != 0;
+    navPvtData_.timeAccuracyNs = timeAccuracyNs;
+    navPvtData_.nanoUtc        = nanoUtc;
+    navPvtData_.utcEpochValid =
+        navPvtData_.validDate &&
+        navPvtData_.validTime &&
+        year >= 2020 &&
+        month >= 1 && month <= 12 &&
+        day >= 1 && day <= 31 &&
+        hour <= 23 &&
+        minute <= 59 &&
+        second <= 60;
+    if (navPvtData_.utcEpochValid) {
+      navPvtData_.epochUtc = toUnixUtc(
+          static_cast<int>(year),
+          static_cast<int>(month),
+          static_cast<int>(day),
+          static_cast<int>(hour),
+          static_cast<int>(minute),
+          static_cast<int>(second > 59 ? 59 : second));
+    }
+    navPvtData_.receivedMs = nowMs;
+    navPvtData_.receivedUs = micros();
     navPvtData_.valid         = true;
+    updateNavPvtLatencyEstimate(ppsNowTicksFn_());
     return;
   }
 
@@ -552,6 +951,12 @@ void GnssMaxM10S::handleUbxFrame(uint8_t messageClass,
     const int16_t azimuth = static_cast<int16_t>(
         static_cast<uint16_t>(payload[offset + 4]) |
         (static_cast<uint16_t>(payload[offset + 5]) << 8));
+    const uint32_t flags = static_cast<uint32_t>(payload[offset + 8]) |
+                           (static_cast<uint32_t>(payload[offset + 9]) << 8) |
+                           (static_cast<uint32_t>(payload[offset + 10]) << 16) |
+                           (static_cast<uint32_t>(payload[offset + 11]) << 24);
+    const uint8_t qualityInd = static_cast<uint8_t>(flags & 0x07);
+    const bool svUsed = (flags & 0x08) != 0;
 
     // Prefer the GNSS ID when it yields a known constellation, but fall back
     // to PRN-based detection when GNSS ID is missing or unrecognized.
@@ -572,6 +977,9 @@ void GnssMaxM10S::handleUbxFrame(uint8_t messageClass,
                    static_cast<int>(elevation),
                    static_cast<int>(azimuth),
                    cn0DbHz,
+                   true,
+                   qualityInd,
+                   svUsed,
                    nowMs);
   }
 
@@ -695,7 +1103,7 @@ void GnssMaxM10S::parseGsvSentence(const char* line) {
       constellation = GNSS_CONSTELLATION_OTHER;
     }
 
-    upsertSatellite(constellation, prn, elev, az, cn0, nowMs);
+    upsertSatellite(constellation, prn, elev, az, cn0, false, 0, false, nowMs);
     lastNavSatUpdateMs_ = nowMs;
   }
 
@@ -770,6 +1178,9 @@ void GnssMaxM10S::upsertSatellite(GnssConstellation constellation,
                                   int elevationDeg,
                                   int azimuthDeg,
                                   int cn0DbHz,
+                                  bool navSatFlagsValid,
+                                  uint8_t qualityInd,
+                                  bool svUsed,
                                   uint32_t nowMs) {
   size_t freeSlot = kMaxSatelliteRecords;
   for (size_t i = 0; i < kMaxSatelliteRecords; ++i) {
@@ -784,6 +1195,11 @@ void GnssMaxM10S::upsertSatellite(GnssConstellation constellation,
       satelliteRecords_[i].info.elevationDeg = static_cast<int16_t>(elevationDeg);
       satelliteRecords_[i].info.azimuthDeg = static_cast<int16_t>(azimuthDeg);
       satelliteRecords_[i].info.cn0DbHz = static_cast<int16_t>(cn0DbHz);
+      if (navSatFlagsValid) {
+        satelliteRecords_[i].info.navSatFlagsValid = true;
+        satelliteRecords_[i].info.qualityInd = qualityInd;
+        satelliteRecords_[i].info.svUsed = svUsed;
+      }
       satelliteRecords_[i].lastSeenMs = nowMs;
       return;
     }
@@ -799,6 +1215,9 @@ void GnssMaxM10S::upsertSatellite(GnssConstellation constellation,
   satelliteRecords_[freeSlot].info.elevationDeg = static_cast<int16_t>(elevationDeg);
   satelliteRecords_[freeSlot].info.azimuthDeg = static_cast<int16_t>(azimuthDeg);
   satelliteRecords_[freeSlot].info.cn0DbHz = static_cast<int16_t>(cn0DbHz);
+  satelliteRecords_[freeSlot].info.navSatFlagsValid = navSatFlagsValid;
+  satelliteRecords_[freeSlot].info.qualityInd = qualityInd;
+  satelliteRecords_[freeSlot].info.svUsed = svUsed;
   satelliteRecords_[freeSlot].lastSeenMs = nowMs;
 }
 

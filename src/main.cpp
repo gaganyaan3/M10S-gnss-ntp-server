@@ -56,7 +56,8 @@ const char* NTP_SERVER_2 = "time.google.com";
 const char* NTP_SERVER_3 = "time.aws.com";
 
 WiFiSetupPortal wifiPortal;
-GnssMaxM10S gps(GNSS_RX_PIN, GNSS_TX_PIN);
+constexpr uint32_t GNSS_BAUD_RATE = 115200UL;
+GnssMaxM10S gps(GNSS_RX_PIN, GNSS_TX_PIN, GNSS_BAUD_RATE);
 NmeaServer nmeaServer;
 NtpServer ntpServer;
 U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
@@ -66,7 +67,8 @@ struct StoredGpsDashboardConfig {
   uint8_t rawLoggingEnabled;
   uint8_t ntpHoldoverEnabled;
   uint8_t enableStatsEnabled;
-  uint8_t reserved[10];
+  uint8_t locationEnabled;
+  uint8_t reserved[9];
 };
 
 unsigned long lastDisplayUpdateMs = 0;
@@ -74,6 +76,14 @@ unsigned long lastGpsStatusLogMs = 0;
 bool wasGpsValid = false;
 bool ntpSynced = false;
 char apSsid[24] = "ESP-Setup";
+uint32_t coarseEpochUseCount = 0;
+int64_t coarseCorrectionDeltaSumUs = 0;
+uint32_t coarseCorrectionDeltaCount = 0;
+unsigned long coarseCorrectionWindowStartMs = 0;
+uint32_t coarseCorrectionLastSampleReceivedUs = 0;
+bool coarseCorrectionLastSampleValid = false;
+int32_t coarseCorrectionLastAppliedUs = 0;
+int64_t coarseCorrectionLastDeltaUs = 0;
 volatile uint32_t ppsPulseCount = 0;
 volatile uint32_t ppsLastEdgeTicks = 0;
 volatile uint32_t ppsPreviousEdgeTicks = 0;
@@ -87,10 +97,14 @@ bool flashButtonLongPressConsumed = false;
 unsigned long flashButtonLastEdgeMs = 0;
 unsigned long flashButtonPressedAtMs = 0;
 GpsDashboardSettings gpsDashboardSettings;
-bool gpsSeenSatelliteSinceBoot = false;
 bool ntpHoldoverValid = false;
-uint64_t ntpHoldoverBaseEpochMsUtc = 0;
-unsigned long ntpHoldoverSetAtMs = 0;
+bool ntpPpsAnchoredSinceBoot = false;
+int64_t ntpHoldoverCorrectionOffsetUs = 0;
+uint64_t ntpHoldoverBaseEpochUsUtc = 0;
+uint64_t ntpHoldoverBaseTicks = 0;
+uint64_t ppsCaptureTicksHigh = 0;
+uint32_t ppsCaptureLastNowTicks = 0;
+bool ppsCaptureTicks64Initialized = false;
 bool holdoverClockValid = false;
 uint32_t holdoverBaseEpochUtc = 0;
 unsigned long holdoverSetAtMs = 0;
@@ -124,6 +138,67 @@ IRAM_ATTR uint32_t ppsCaptureNowTicks() {
   // Dummy read of the config register to let the latch settle (1–2 APB cycles).
   (void)MCPWM0.cap_chn_cfg[PPS_MCPWM_NOW_CHANNEL].capn_sw;
   return MCPWM0.cap_chn[PPS_MCPWM_NOW_CHANNEL].capn_value;
+}
+
+uint64_t ppsCaptureNowTicks64() {
+  const uint32_t nowTicks = ppsCaptureNowTicks();
+  if (!ppsCaptureTicks64Initialized) {
+    ppsCaptureLastNowTicks = nowTicks;
+    ppsCaptureTicks64Initialized = true;
+  } else if (nowTicks < ppsCaptureLastNowTicks) {
+    ppsCaptureTicksHigh += (1ULL << 32);
+  }
+  ppsCaptureLastNowTicks = nowTicks;
+  return ppsCaptureTicksHigh | static_cast<uint64_t>(nowTicks);
+}
+
+uint64_t ppsTicksToUs(uint64_t ticks) {
+  return (ticks / PPS_MCPWM_TICKS_PER_SECOND) * 1000000ULL +
+         ((ticks % PPS_MCPWM_TICKS_PER_SECOND) * 1000000ULL) / PPS_MCPWM_TICKS_PER_SECOND;
+}
+
+void anchorNtpHoldoverRawUs(uint64_t epochUsUtc) {
+  ntpPpsAnchoredSinceBoot = true;
+  ntpHoldoverValid = true;
+  ntpHoldoverBaseEpochUsUtc = epochUsUtc;
+  ntpHoldoverBaseTicks = ppsCaptureNowTicks64();
+}
+
+void anchorNtpHoldoverUs(uint64_t epochUsUtc) {
+  const int64_t correctedEpochUs =
+      static_cast<int64_t>(epochUsUtc) + ntpHoldoverCorrectionOffsetUs;
+  if (correctedEpochUs <= 0) {
+    return;
+  }
+  anchorNtpHoldoverRawUs(static_cast<uint64_t>(correctedEpochUs));
+}
+
+bool currentNtpHoldoverUs(uint64_t& epochUsUtcOut) {
+  if (!ntpHoldoverValid) {
+    return false;
+  }
+
+  const uint64_t elapsedTicks = ppsCaptureNowTicks64() - ntpHoldoverBaseTicks;
+  epochUsUtcOut = ntpHoldoverBaseEpochUsUtc + ppsTicksToUs(elapsedTicks);
+  return true;
+}
+
+void resetCoarseCorrectionWindow() {
+  coarseCorrectionDeltaSumUs = 0;
+  coarseCorrectionDeltaCount = 0;
+  coarseCorrectionWindowStartMs = 0;
+}
+
+bool deltaExceedsThreshold(int64_t deltaUs, int64_t thresholdUs) {
+  return deltaUs > thresholdUs || deltaUs < -thresholdUs;
+}
+
+int32_t microsecondsToMillisecondsPart(int64_t valueUs) {
+  return static_cast<int32_t>(valueUs / 1000LL);
+}
+
+int32_t microsecondsToSubMillisecondPart(int64_t valueUs) {
+  return static_cast<int32_t>(valueUs % 1000LL);
 }
 
 void setDisplayEnabled(bool enable) {
@@ -160,12 +235,14 @@ void loadGpsDashboardSettings() {
     gpsDashboardSettings.rawLoggingEnabled = false;
     gpsDashboardSettings.ntpHoldoverEnabled = true;
     gpsDashboardSettings.enableStats = true;
+    gpsDashboardSettings.enableLocation = false;
     return;
   }
 
   gpsDashboardSettings.rawLoggingEnabled = stored.rawLoggingEnabled != 0;
   gpsDashboardSettings.ntpHoldoverEnabled = stored.ntpHoldoverEnabled != 0;
   gpsDashboardSettings.enableStats = stored.enableStatsEnabled != 0;
+  gpsDashboardSettings.enableLocation = stored.locationEnabled != 0;
 }
 
 void applyGpsDashboardSettings() {
@@ -179,6 +256,7 @@ bool saveGpsDashboardSettings(const GpsDashboardSettings& settings) {
   stored.rawLoggingEnabled = settings.rawLoggingEnabled ? 1 : 0;
   stored.ntpHoldoverEnabled = settings.ntpHoldoverEnabled ? 1 : 0;
   stored.enableStatsEnabled = settings.enableStats ? 1 : 0;
+  stored.locationEnabled = settings.enableLocation ? 1 : 0;
 
   EEPROM.begin(WiFiSetupPortal::EEPROM_BYTES);
   EEPROM.put(WiFiSetupPortal::GNSS_CONFIG_ADDR, stored);
@@ -192,14 +270,10 @@ bool saveGpsDashboardSettings(const GpsDashboardSettings& settings) {
   return committed;
 }
 
-bool updateGpsHoldoverFromLiveFix(unsigned long nowMs, uint64_t& epochMsUtcOut) {
+bool gpsNavPvtCoarseEpochUs(uint64_t& epochUsUtcOut, uint32_t* receivedUsOut = nullptr) {
   if (!gps.hasSatelliteCount() || gps.satelliteCount() == 0) {
     return false;
   }
-
-  // Always record that we have seen a satellite since boot (used by the
-  // dashboard "Seen Satellite Since Boot" field) regardless of fix quality.
-  gpsSeenSatelliteSinceBoot = true;
 
   // Only accept the timestamp for NTP / holdover purposes when the GNSS
   // module reports fullyResolved — meaning the UTC time is unambiguous and
@@ -210,62 +284,241 @@ bool updateGpsHoldoverFromLiveFix(unsigned long nowMs, uint64_t& epochMsUtcOut) 
     return false;
   }
 
-  bool valid = gps.currentUtcEpochMsPps(epochMsUtcOut);
-  if (!valid) {
-    valid = gps.currentUtcEpochMs(epochMsUtcOut);
-  }
-  if (!valid) {
+  if (!gps.navPvtUtcEpochUs(epochUsUtcOut)) {
     return false;
   }
 
-  ntpHoldoverValid = true;
-  ntpHoldoverBaseEpochMsUtc = epochMsUtcOut;
-  ntpHoldoverSetAtMs = nowMs;
+  if (receivedUsOut) {
+    *receivedUsOut = pvt.receivedUs;
+  }
+
   return true;
 }
 
-bool currentGpsNtpEpochMs(uint64_t& epochMsUtcOut) {
-  const unsigned long nowMs = millis();
-  if (updateGpsHoldoverFromLiveFix(nowMs, epochMsUtcOut)) {
-    return true;
-  }
+bool updateCoarseCorrection(uint64_t referenceEpochUsUtc,
+                            bool applyToHoldover,
+                            bool updateServedEpoch,
+                            uint64_t& epochUsUtcInOut) {
+  constexpr int64_t MAX_PPS_COARSE_DELTA_US = 50000; //50ms
+  constexpr unsigned long COARSE_CORRECTION_WINDOW_MS = 60000UL;
 
-  if (!gpsDashboardSettings.ntpHoldoverEnabled || !ntpHoldoverValid) {
+  if (gps.ppsRecentlySeen()) {
+    if (coarseCorrectionDeltaCount > 0) {
+      resetCoarseCorrectionWindow();
+    }
     return false;
   }
 
-  epochMsUtcOut = ntpHoldoverBaseEpochMsUtc + static_cast<uint64_t>(nowMs - ntpHoldoverSetAtMs);
+  uint64_t coarseEpochUsUtc = 0;
+  uint32_t coarseReceivedUs = 0;
+  if (!gpsNavPvtCoarseEpochUs(coarseEpochUsUtc, &coarseReceivedUs) ||
+      (coarseCorrectionLastSampleValid &&
+       coarseReceivedUs == coarseCorrectionLastSampleReceivedUs)) {
+    return false;
+  }
+
+  coarseCorrectionLastSampleReceivedUs = coarseReceivedUs;
+  coarseCorrectionLastSampleValid = true;
+
+  const int64_t deltaUs = static_cast<int64_t>(coarseEpochUsUtc) -
+                          static_cast<int64_t>(referenceEpochUsUtc);
+  coarseCorrectionLastDeltaUs = deltaUs;
+  const unsigned long nowMs = millis();
+
+  if (coarseCorrectionDeltaCount == 0) {
+    if (!deltaExceedsThreshold(deltaUs, MAX_PPS_COARSE_DELTA_US)) {
+      return false;
+    }
+    coarseCorrectionWindowStartMs = nowMs;
+    Serial.printf("COARSE averaging window start | startDeltaUs=%lld startDeltaMs=%ld startDeltaSubUs=%ld thresholdUs=%lld referenceEpochUs=%llu navPvtEpochUs=%llu receivedUs=%lu\n",
+                  static_cast<long long>(coarseCorrectionLastDeltaUs),
+                  static_cast<long>(microsecondsToMillisecondsPart(coarseCorrectionLastDeltaUs)),
+                  static_cast<long>(microsecondsToSubMillisecondPart(coarseCorrectionLastDeltaUs)),
+                  static_cast<long long>(MAX_PPS_COARSE_DELTA_US),
+                  static_cast<unsigned long long>(referenceEpochUsUtc),
+                  static_cast<unsigned long long>(coarseEpochUsUtc),
+                  static_cast<unsigned long>(coarseReceivedUs));
+  }
+
+  coarseCorrectionDeltaSumUs += deltaUs;
+  ++coarseCorrectionDeltaCount;
+  const unsigned long windowAgeMs = nowMs - coarseCorrectionWindowStartMs;
+  const int64_t runningAvgDeltaUs =
+      coarseCorrectionDeltaSumUs / static_cast<int64_t>(coarseCorrectionDeltaCount);
+  Serial.printf("COARSE averaging sample | count=%lu avgDeltaUs=%lld avgDeltaMs=%ld avgDeltaSubUs=%ld\n",
+                static_cast<unsigned long>(coarseCorrectionDeltaCount),
+                static_cast<long long>(runningAvgDeltaUs),
+                static_cast<long>(microsecondsToMillisecondsPart(runningAvgDeltaUs)),
+                static_cast<long>(microsecondsToSubMillisecondPart(runningAvgDeltaUs)));
+
+  if (windowAgeMs < COARSE_CORRECTION_WINDOW_MS) {
+    return false;
+  }
+
+  const int64_t avgDeltaUs =
+      coarseCorrectionDeltaSumUs / static_cast<int64_t>(coarseCorrectionDeltaCount);
+  const int32_t correctionUs = static_cast<int32_t>(avgDeltaUs / 10LL);
+  coarseCorrectionLastAppliedUs = correctionUs;
+
+  bool applied = false;
+  uint64_t currentHoldoverUs = 0;
+  int64_t correctedHoldoverUs = 0;
+  if (applyToHoldover && correctionUs != 0) {
+    if (currentNtpHoldoverUs(currentHoldoverUs)) {
+      correctedHoldoverUs = static_cast<int64_t>(currentHoldoverUs) + correctionUs;
+      if (correctedHoldoverUs > 0) {
+        ntpHoldoverCorrectionOffsetUs += correctionUs;
+        if (updateServedEpoch) {
+          epochUsUtcInOut = static_cast<uint64_t>(correctedHoldoverUs);
+        }
+        ++coarseEpochUseCount;
+        anchorNtpHoldoverRawUs(static_cast<uint64_t>(correctedHoldoverUs));
+        applied = true;
+      }
+    }
+  }
+  Serial.printf("COARSE averaging complete | correctionUs=%ld\n",
+                static_cast<long>(correctionUs));
+
+  resetCoarseCorrectionWindow();
+  return applied;
+}
+
+bool currentGpsNtpEpochUs(uint64_t& epochUsUtcOut) {
+  // Normal operation: NAV-PVT establishes the UTC second for the next PPS
+  // edge, then PPS/hardware ticks provide the precise NTP timestamp. This also
+  // covers short PPS outages by continuing from the last PPS edge with the
+  // local oscillator for a bounded interval.
+  uint64_t epochNsUtc = 0;
+  if (gps.currentUtcEpochNsPps(epochNsUtc)) {
+    epochUsUtcOut = epochNsUtc / 1000ULL;
+    anchorNtpHoldoverUs(epochUsUtcOut);
+    // Only let NAV-PVT coarse correction act during a PPS outage. While PPS is
+    // fresh, PPS/hardware ticks remain authoritative.
+    updateCoarseCorrection(epochUsUtcOut, true, false, epochUsUtcOut);
+    return true;
+  }
+
+  if (!ntpPpsAnchoredSinceBoot) {
+    return false;
+  }
+
+  if (gpsDashboardSettings.ntpHoldoverEnabled && ntpHoldoverValid) {
+    if (!currentNtpHoldoverUs(epochUsUtcOut)) {
+      return false;
+    }
+
+    // NAV-PVT can still provide a coarse correction point. Once a fresh sample
+    // crosses the threshold, collect all fresh deltas for a full minute and
+    // apply only a small portion of the average to holdover.
+    updateCoarseCorrection(epochUsUtcOut, true, true, epochUsUtcOut);
+    return true;
+  }
+
+  return false;
+}
+
+bool currentGpsNtpEpochMs(uint64_t& epochMsUtcOut) {
+  uint64_t epochUsUtc = 0;
+  if (!currentGpsNtpEpochUs(epochUsUtc)) {
+    return false;
+  }
+
+  epochMsUtcOut = epochUsUtc / 1000ULL;
   return true;
+}
+
+void processPpsCapture() {
+  uint32_t pulseCountSnapshot = 0;
+  uint32_t edgeTicksSnapshot = 0;
+  uint32_t previousEdgeTicksSnapshot = 0;
+  noInterrupts();
+  pulseCountSnapshot = ppsPulseCount;
+  edgeTicksSnapshot = ppsLastEdgeTicks;
+  previousEdgeTicksSnapshot = ppsPreviousEdgeTicks;
+  interrupts();
+
+  if (pulseCountSnapshot == lastLoggedPpsPulseCount) {
+    return;
+  }
+
+  const uint32_t elapsedPulses = pulseCountSnapshot - lastLoggedPpsPulseCount;
+  lastLoggedPpsPulseCount = pulseCountSnapshot;
+  gps.onPpsEdge(edgeTicksSnapshot, elapsedPulses);
+
+  const uint32_t diffTicks = edgeTicksSnapshot - previousEdgeTicksSnapshot;
+  const double periodSeconds = static_cast<double>(diffTicks) / PPS_MCPWM_TICKS_PER_SECOND;
+  if (pulseCountSnapshot > 1) {
+    lastPpsPeriodSeconds = periodSeconds;
+    lastPpsPeriodValid = true;
+  }
+  Serial.printf("PPS pulse #%lu at %lu ticks | PPS: %.12f s",
+                static_cast<unsigned long>(pulseCountSnapshot),
+                static_cast<unsigned long>(edgeTicksSnapshot),
+                periodSeconds);
+  if (elapsedPulses > 1) {
+    Serial.printf(" | skipped main-loop pulses: %lu",
+                  static_cast<unsigned long>(elapsedPulses - 1));
+  }
+  Serial.println();
 }
 
 void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus& statusOut) {
   settingsOut = gpsDashboardSettings;
+  statusOut.locationEnabled = settingsOut.enableLocation;
   statusOut.satelliteCountValid = gps.hasSatelliteCount();
   if (statusOut.satelliteCountValid) {
     statusOut.satelliteCount = gps.satelliteCount();
   }
-  statusOut.seenSatelliteSinceBoot = gpsSeenSatelliteSinceBoot;
-  statusOut.ppsAligned = gps.isPpsAligned();
-  statusOut.ppsPeriodValid = lastPpsPeriodValid;
+  uint32_t ppsPulseCountSnapshot = 0;
+  noInterrupts();
+  ppsPulseCountSnapshot = ppsPulseCount;
+  interrupts();
+  statusOut.ppsSeenSinceBoot = ppsPulseCountSnapshot > 0;
+  statusOut.ppsAligned = gps.ppsRecentlySeen();
+  statusOut.ppsPeriodValid = statusOut.ppsAligned && lastPpsPeriodValid;
   statusOut.ppsPeriodSeconds = lastPpsPeriodSeconds;
-  uint64_t epochMsUtc = 0;
-  statusOut.gpsTimeValid = currentGpsNtpEpochMs(epochMsUtc);
+  uint64_t epochUsUtc = 0;
+  statusOut.gpsTimeValid = gpsNavPvtCoarseEpochUs(epochUsUtc);
   if (statusOut.gpsTimeValid) {
-    statusOut.gpsEpochUtc = static_cast<uint32_t>(epochMsUtc / 1000ULL);
+    statusOut.gpsEpochUtcMicros = epochUsUtc;
+  }
+  statusOut.coarseEpochUseCount = coarseEpochUseCount;
+  uint64_t ntpEpochUsUtc = 0;
+  statusOut.ntpReady = currentGpsNtpEpochUs(ntpEpochUsUtc);
+  statusOut.correctionUs = coarseCorrectionLastAppliedUs;
+  {
+    GnssMonRfData monRf;
+    gps.monRfSnapshot(monRf);
+    statusOut.monRfValid = monRf.valid;
+    statusOut.monRfAgeMs = monRf.receivedMs == 0 ? 0 : millis() - monRf.receivedMs;
+    statusOut.jammingState = monRf.jammingState;
+    statusOut.jamInd = monRf.jamInd;
+    statusOut.noisePerMS = monRf.noisePerMS;
+    statusOut.agcCnt = monRf.agcCnt;
+    statusOut.antStatus = monRf.antStatus;
+    statusOut.antPower = monRf.antPower;
+    statusOut.ofsI = monRf.ofsI;
+    statusOut.ofsQ = monRf.ofsQ;
+    statusOut.magI = monRf.magI;
+    statusOut.magQ = monRf.magQ;
+    statusOut.agcCntAvg = monRf.agcCntAvg;
+    statusOut.monRfCfgValsetAck = monRf.cfgValsetAck;
+    statusOut.monRfCfgValsetNak = monRf.cfgValsetNak;
+    statusOut.monRfCfgAntAck = monRf.cfgAntAck;
+    statusOut.monRfCfgAntNak = monRf.cfgAntNak;
+  }
+  statusOut.holdoverUtcValid = ntpHoldoverValid;
+  if (statusOut.holdoverUtcValid) {
+    statusOut.holdoverUtcValid = currentNtpHoldoverUs(statusOut.holdoverEpochUtcMicros);
   }
   statusOut.gpsUartLabel = F("GPIO22 <- GNSS TX, GPIO21 -> GNSS RX");
   statusOut.ppsPinLabel = F("GPIO27");
-  statusOut.gpsBaudRate = 9600;
+  statusOut.gpsBaudRate = GNSS_BAUD_RATE;
   statusOut.nmeaPort = NmeaServer::DEFAULT_PORT;
   statusOut.ntpPort = NtpServer::DEFAULT_PORT;
   statusOut.cpuUtilizationPercent = currentCpuUtilizationPercent;
   statusOut.internalTemperatureC = currentInternalTemperatureC;
-
-  // Compute navPvtValid here (before the enableStats guard) so the dashboard
-  // can always show it regardless of whether stats collection is on or off.
-  statusOut.navPvtValid = gps.hasLocation() &&
-                          gps.hasAltitude() &&
-                          gps.hasSpeed();
 
   // NAV-PVT detail fields — parsed directly from UBX binary, always available.
   {
@@ -340,6 +593,9 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
     statusOut.navSatDetails[i].elevationDeg = navSat.satellites[i].elevationDeg;
     statusOut.navSatDetails[i].azimuthDeg = navSat.satellites[i].azimuthDeg;
     statusOut.navSatDetails[i].cn0DbHz = navSat.satellites[i].cn0DbHz;
+    statusOut.navSatDetails[i].navSatFlagsValid = navSat.satellites[i].navSatFlagsValid;
+    statusOut.navSatDetails[i].qualityInd = navSat.satellites[i].qualityInd;
+    statusOut.navSatDetails[i].svUsed = navSat.satellites[i].svUsed;
   }
   // Prefer the detailed navSat snapshot count (can exceed 12) when valid.
   if (navSat.valid) {
@@ -384,26 +640,57 @@ void handleDisplayToggleButton(unsigned long nowMs) {
   }
 }
 
-void formatIstTimeOnlyFromEpoch(uint32_t epochUtc, char* out, size_t outLen) {
+bool formatIstTimeOnlyFromEpoch(uint32_t epochUtc, char* out, size_t outLen) {
+  if (outLen == 0) {
+    return false;
+  }
+  out[0] = '\0';
   time_t istEpoch = static_cast<time_t>(epochUtc + IST_OFFSET_SECONDS);
   struct tm tmValue;
-  gmtime_r(&istEpoch, &tmValue);
-  strftime(out, outLen, "%H:%M:%S", &tmValue);
+  if (gmtime_r(&istEpoch, &tmValue) == nullptr) {
+    return false;
+  }
+  return strftime(out, outLen, "%H:%M:%S", &tmValue) > 0;
 }
 
-void formatIstDateOnlyFromEpoch(uint32_t epochUtc, char* out, size_t outLen) {
+bool formatIstDateOnlyFromEpoch(uint32_t epochUtc, char* out, size_t outLen) {
+  if (outLen == 0) {
+    return false;
+  }
+  out[0] = '\0';
   time_t istEpoch = static_cast<time_t>(epochUtc + IST_OFFSET_SECONDS);
   struct tm tmValue;
-  gmtime_r(&istEpoch, &tmValue);
-  strftime(out, outLen, "%d/%m/%y", &tmValue);
+  if (gmtime_r(&istEpoch, &tmValue) == nullptr) {
+    return false;
+  }
+  return strftime(out, outLen, "%d/%m/%y", &tmValue) > 0;
 }
 
-void formatIstTimeFromEpoch(uint32_t epochUtc, char* out, size_t outLen) {
-  char timeText[16];
-  char dateText[16];
-  formatIstTimeOnlyFromEpoch(epochUtc, timeText, sizeof(timeText));
-  formatIstDateOnlyFromEpoch(epochUtc, dateText, sizeof(dateText));
-  snprintf(out, outLen, "%s %s", timeText, dateText);
+bool formatIstTimeFromEpoch(uint32_t epochUtc, char* out, size_t outLen) {
+  if (outLen == 0) {
+    return false;
+  }
+  out[0] = '\0';
+  char timeText[16] = {};
+  char dateText[16] = {};
+  if (!formatIstTimeOnlyFromEpoch(epochUtc, timeText, sizeof(timeText)) ||
+      !formatIstDateOnlyFromEpoch(epochUtc, dateText, sizeof(dateText))) {
+    return false;
+  }
+  return snprintf(out, outLen, "%s %s", timeText, dateText) > 0;
+}
+
+bool isPrintableText(const char* text) {
+  if (text == nullptr || text[0] == '\0') {
+    return false;
+  }
+  for (size_t i = 0; text[i] != '\0'; ++i) {
+    const uint8_t byteValue = static_cast<uint8_t>(text[i]);
+    if (byteValue < 0x20 || byteValue > 0x7E) {
+      return false;
+    }
+  }
+  return true;
 }
 
 void formatHdopValue(float hdopValue, bool hdopValid, char* out, size_t outLen) {
@@ -588,20 +875,21 @@ void setup() {
   applyGpsDashboardSettings();
   nmeaServer.setLineTransformer([](const String& line) { return applyPpsTimeToNmeaLine(line); });
   gps.onRawLine([](const String& line) { nmeaServer.broadcastLine(line); });
-  Serial.println("GNSS serial started at 9600 baud on GPIO22/GPIO21");
+  Serial.printf("GNSS serial started at %lu baud on GPIO22/GPIO21\n",
+                static_cast<unsigned long>(GNSS_BAUD_RATE));
 
   nmeaServer.begin();
   Serial.printf("NMEA server listening on port %u\n", NmeaServer::DEFAULT_PORT);
   Serial.printf("Setup hotspot SSID (if needed): %s\n", apSsid);
 
   ntpServer.setTimeProvider([](uint32_t& epochUtcOut, uint32_t& fractionOut) {
-    uint64_t epochMsUtcOut = 0;
-    if (!currentGpsNtpEpochMs(epochMsUtcOut)) {
+    uint64_t epochUsUtcOut = 0;
+    if (!currentGpsNtpEpochUs(epochUsUtcOut)) {
       return false;
     }
 
-    epochUtcOut = static_cast<uint32_t>(epochMsUtcOut / 1000ULL);
-    fractionOut = static_cast<uint32_t>((epochMsUtcOut % 1000ULL) * 4294967296ULL / 1000ULL);
+    epochUtcOut = static_cast<uint32_t>(epochUsUtcOut / 1000000ULL);
+    fractionOut = static_cast<uint32_t>((epochUsUtcOut % 1000000ULL) * 4294967296ULL / 1000000ULL);
     return true;
   });
   ntpServer.begin();
@@ -649,48 +937,29 @@ void loop() {
     ntpSynced = false;
   }
 
+  // Consume PPS before serial polling. u-blox NAV-PVT commonly arrives after
+  // the PPS edge for that UTC second; processing PPS first avoids anchoring an
+  // already-fired edge to a just-parsed PVT timestamp for the same second.
+  processPpsCapture();
+
   gps.poll();
-  uint64_t gpsHoldoverEpochMs = 0;
-  updateGpsHoldoverFromLiveFix(nowMs, gpsHoldoverEpochMs);
+  ppsCaptureNowTicks64();
   nmeaServer.poll();
   ntpServer.poll();
-
-  uint32_t pulseCountSnapshot = 0;
-  uint32_t edgeTicksSnapshot = 0;
-  uint32_t previousEdgeTicksSnapshot = 0;
-  noInterrupts();
-  pulseCountSnapshot = ppsPulseCount;
-  edgeTicksSnapshot = ppsLastEdgeTicks;
-  previousEdgeTicksSnapshot = ppsPreviousEdgeTicks;
-  interrupts();
-  if (pulseCountSnapshot != lastLoggedPpsPulseCount) {
-    lastLoggedPpsPulseCount = pulseCountSnapshot;
-    gps.onPpsEdge(edgeTicksSnapshot);
-    const uint32_t diffTicks = edgeTicksSnapshot - previousEdgeTicksSnapshot;
-    const double periodSeconds = static_cast<double>(diffTicks) / PPS_MCPWM_TICKS_PER_SECOND;
-    if (pulseCountSnapshot > 1) {
-      lastPpsPeriodSeconds = periodSeconds;
-      lastPpsPeriodValid = true;
-    }
-    Serial.printf("PPS pulse #%lu at %lu ticks | PPS: %.9f s\n",
-                  static_cast<unsigned long>(pulseCountSnapshot),
-                  static_cast<unsigned long>(edgeTicksSnapshot),
-                  periodSeconds);
-  }
 
   if (nowMs - lastDisplayUpdateMs < DISPLAY_INTERVAL_MS) {
     return;
   }
   lastDisplayUpdateMs = nowMs;
 
-  char gpsLine[32];
-  char ntpLine[32];
-  char gpsTimeLine[16];
-  char gpsDateLine[16];
-  char ntpTimeLine[16];
-  char ntpDateLine[16];
-  char statusLine[64];
-  char hdopText[8];
+  char gpsLine[32] = "Time unavailable";
+  char ntpLine[32] = "Syncing...";
+  char gpsTimeLine[16] = "No GNSS";
+  char gpsDateLine[16] = "fix";
+  char ntpTimeLine[16] = "Syncing";
+  char ntpDateLine[16] = "";
+  char statusLine[64] = "";
+  char hdopText[8] = "--";
 
   uint32_t satCount = 0;
   float hdopValue = 0.0f;
@@ -741,9 +1010,21 @@ void loop() {
   }
 
   if (gpsStamp.valid) {
-    formatIstTimeFromEpoch(gpsStamp.epochUtc, gpsLine, sizeof(gpsLine));
-    formatIstTimeOnlyFromEpoch(gpsStamp.epochUtc, gpsTimeLine, sizeof(gpsTimeLine));
-    formatIstDateOnlyFromEpoch(gpsStamp.epochUtc, gpsDateLine, sizeof(gpsDateLine));
+    const bool gpsLineValid = formatIstTimeFromEpoch(gpsStamp.epochUtc, gpsLine, sizeof(gpsLine)) &&
+                              isPrintableText(gpsLine);
+    const bool gpsTimeValid = formatIstTimeOnlyFromEpoch(gpsStamp.epochUtc, gpsTimeLine, sizeof(gpsTimeLine)) &&
+                              isPrintableText(gpsTimeLine);
+    const bool gpsDateValid = formatIstDateOnlyFromEpoch(gpsStamp.epochUtc, gpsDateLine, sizeof(gpsDateLine)) &&
+                              isPrintableText(gpsDateLine);
+    if (!gpsLineValid) {
+      snprintf(gpsLine, sizeof(gpsLine), "Time unavailable");
+    }
+    if (!gpsTimeValid) {
+      snprintf(gpsTimeLine, sizeof(gpsTimeLine), "No GNSS");
+    }
+    if (!gpsDateValid) {
+      snprintf(gpsDateLine, sizeof(gpsDateLine), "fix");
+    }
     if (!gpsTimeFresh) {
       strncat(gpsTimeLine, "*", sizeof(gpsTimeLine) - strlen(gpsTimeLine) - 1);
       if (!gpsHasFix) {
@@ -779,9 +1060,18 @@ void loop() {
   uint32_t ntpEpochUtc = 0;
   const bool ntpValid = getNtpUtcEpoch(ntpEpochUtc);
   if (ntpValid) {
-    formatIstTimeFromEpoch(ntpEpochUtc, ntpLine, sizeof(ntpLine));
-    formatIstTimeOnlyFromEpoch(ntpEpochUtc, ntpTimeLine, sizeof(ntpTimeLine));
-    formatIstDateOnlyFromEpoch(ntpEpochUtc, ntpDateLine, sizeof(ntpDateLine));
+    if (!formatIstTimeFromEpoch(ntpEpochUtc, ntpLine, sizeof(ntpLine)) ||
+        !isPrintableText(ntpLine)) {
+      snprintf(ntpLine, sizeof(ntpLine), "Time unavailable");
+    }
+    if (!formatIstTimeOnlyFromEpoch(ntpEpochUtc, ntpTimeLine, sizeof(ntpTimeLine)) ||
+        !isPrintableText(ntpTimeLine)) {
+      snprintf(ntpTimeLine, sizeof(ntpTimeLine), "Syncing");
+    }
+    if (!formatIstDateOnlyFromEpoch(ntpEpochUtc, ntpDateLine, sizeof(ntpDateLine)) ||
+        !isPrintableText(ntpDateLine)) {
+      ntpDateLine[0] = '\0';
+    }
   } else {
     snprintf(ntpLine, sizeof(ntpLine), "Syncing...");
     snprintf(ntpTimeLine, sizeof(ntpTimeLine), "Syncing");
