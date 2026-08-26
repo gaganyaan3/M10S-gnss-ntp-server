@@ -81,6 +81,25 @@ struct GnssMonRfData {
   uint32_t receivedMs = 0;
 };
 
+struct GnssTimTpData {
+  bool valid = false;
+  uint32_t towMs = 0;
+  uint32_t towSubMs = 0;
+  int32_t qErrPs = 0;
+  uint16_t week = 0;
+  uint8_t flags = 0;
+  uint8_t refInfo = 0;
+  bool utcTimeBase = false;
+  bool utcAvailable = false;
+  bool qErrInvalid = false;
+  bool tpNotLocked = false;
+  bool utcEpochValid = false;
+  uint64_t epochUtcNs = 0;
+  int32_t appliedQErrNs = 0;
+  uint32_t receivedMs = 0;
+  uint32_t receivedUs = 0;
+};
+
 struct ClockStamp {
   bool valid;
   uint32_t epochUtc;
@@ -139,6 +158,7 @@ class GnssMaxM10S {
   void navSatSnapshot(GnssNavSatSnapshot& out) const;
   void navPvtSnapshot(GnssNavPvtData& out) const;
   void monRfSnapshot(GnssMonRfData& out) const;
+  void timTpSnapshot(GnssTimTpData& out) const;
   void enableUbxLogging(bool enable);
 
  private:
@@ -148,7 +168,8 @@ class GnssMaxM10S {
   static constexpr uint32_t kNavSatStaleMs = 6000UL;
   static constexpr uint32_t kSatelliteCountStaleMs = 6000UL;
   static constexpr uint32_t kMaxPvtAgeForPpsMs = 1500UL;
-  static constexpr uint32_t kMaxPpsHoldoverMs = 30000UL;
+  static constexpr uint32_t kMaxTimTpAgeForPpsMs = 1500UL;
+  static constexpr uint32_t kMaxPpsHoldoverMs = 10000UL;
   static constexpr uint32_t kPpsRecentlySeenMs = 2500UL;
   static constexpr uint32_t kMonRfStaleMs = 3000UL;
   static uint32_t toUnixUtc(int year, int month, int day, int hour, int minute, int second);
@@ -182,6 +203,7 @@ class GnssMaxM10S {
                        bool svUsed,
                        uint32_t nowMs);
   void pruneStaleSatellites(uint32_t nowMs);
+  bool timTpCanAnchorPps(uint64_t& epochNsUtcOut) const;
 
   struct SatelliteRecord {
     bool inUse = false;
@@ -201,6 +223,7 @@ class GnssMaxM10S {
   bool ppsAligned_ = false;
   bool ppsHasPreviousEdge_ = false;
   uint32_t ppsReferenceEpochSec_ = 0;
+  int32_t ppsReferenceEpochOffsetNs_ = 0;
   uint32_t ppsEdgeTicks_ = 0;
   uint32_t ppsEdgeMs_ = 0;
   TickClockFn ppsNowTicksFn_ = [](){ return micros(); };
@@ -239,6 +262,8 @@ class GnssMaxM10S {
 
   GnssNavPvtData navPvtData_ = {};
   GnssMonRfData monRfData_ = {};
+  GnssTimTpData timTpData_ = {};
+  bool timTpPendingForPps_ = false;
   uint16_t monRfAgcCntSamples_[5] = {};
   uint8_t monRfAgcCntSamplePos_ = 0;
   uint8_t monRfAgcCntSampleCount_ = 0;

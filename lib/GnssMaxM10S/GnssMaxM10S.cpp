@@ -2,6 +2,9 @@
 
 namespace {
 
+constexpr uint32_t UNIX_GPS_EPOCH_OFFSET_SECONDS = 315964800UL;
+constexpr uint32_t SECONDS_PER_WEEK = 7UL * 24UL * 60UL * 60UL;
+
 int parseIntToken(const String& token, int fallback) {
   if (token.length() == 0) {
     return fallback;
@@ -172,6 +175,7 @@ void GnssMaxM10S::begin() {
   }
   sendUbxCfgMsg(0x01, 0x07, 1);  // Enable UBX-NAV-PVT  on UART1
   sendUbxCfgMsg(0x01, 0x35, 1);  // Enable UBX-NAV-SAT  on UART1
+  sendUbxCfgMsg(0x0D, 0x01, 1);  // Enable UBX-TIM-TP   on UART1
   sendUbxCfgMsg(0x0A, 0x38, 1);  // Enable UBX-MON-RF   on UART1
   const uint32_t antennaSupervisorKeys[] = {
       0x10A3002E,  // CFG-HW-ANT_CFG_VOLTCTRL
@@ -274,22 +278,32 @@ void GnssMaxM10S::onPpsEdge(uint32_t edgeTicks, uint32_t elapsedPulses) {
     elapsedPulses = 1;
   }
 
+  uint64_t timTpEpochNsUtc = 0;
+  const bool timTpCanAnchor =
+      elapsedPulses == 1 && timTpCanAnchorPps(timTpEpochNsUtc);
   const bool pvtCanAnchorPps =
       navPvtData_.valid &&
       navPvtData_.utcEpochValid &&
       navPvtData_.validDate &&
       navPvtData_.validTime &&
       navPvtData_.fullyResolved &&
+      navPvtData_.gnssFixOK &&
       (millis() - navPvtData_.receivedMs <= kMaxPvtAgeForPpsMs);
 
-  if (pvtCanAnchorPps) {
-    // NAV-PVT gives the coarse UTC second from the serial time solution. The
-    // next captured PPS edge starts the next UTC second; elapsedPulses keeps
-    // that association correct even if the main loop was blocked briefly.
+  if (timTpCanAnchor) {
+    // TIM-TP reports the time of the next TIMEPULSE0 edge. Use it as the
+    // primary PPS anchor, including the qErr sawtooth correction when valid.
+    ppsReferenceEpochSec_ = static_cast<uint32_t>(timTpEpochNsUtc / 1000000000ULL);
+    ppsReferenceEpochOffsetNs_ = static_cast<int32_t>(timTpEpochNsUtc % 1000000000ULL);
+    timTpPendingForPps_ = false;
+  } else if (pvtCanAnchorPps) {
+    // Fallback: NAV-PVT gives the coarse UTC second from the serial time
+    // solution. The next captured PPS edge starts the next UTC second.
     ppsReferenceEpochSec_ = navPvtData_.epochUtc + elapsedPulses;
+    ppsReferenceEpochOffsetNs_ = 0;
   } else if (ppsAligned_) {
-    // Once anchored, PPS remains the precision source. A late/missing PVT
-    // frame should not break lock; each captured PPS advances exactly 1 second.
+    // Once anchored, PPS remains the precision source. A late/missing time
+    // message should not break lock; each captured PPS advances by pulse count.
     ppsReferenceEpochSec_ += elapsedPulses;
   } else {
     ppsHasPreviousEdge_ = false;
@@ -378,7 +392,11 @@ bool GnssMaxM10S::currentUtcEpochPps(uint32_t& epochUtcOut) {
 
   const uint32_t nowTicks = ppsNowTicksFn_();
   const uint32_t elapsedTicks = nowTicks - ppsEdgeTicks_;
-  epochUtcOut = ppsReferenceEpochSec_ + (elapsedTicks / ppsNominalTicksPerSecond_);
+  const uint64_t epochNsUtc =
+      (static_cast<uint64_t>(ppsReferenceEpochSec_) * 1000000000ULL) +
+      static_cast<uint64_t>(ppsReferenceEpochOffsetNs_) +
+      ((static_cast<uint64_t>(elapsedTicks) * 1000000000ULL) / ppsNominalTicksPerSecond_);
+  epochUtcOut = static_cast<uint32_t>(epochNsUtc / 1000000000ULL);
   return true;
 }
 
@@ -406,7 +424,10 @@ bool GnssMaxM10S::currentUtcEpochNsPps(uint64_t& epochNsUtcOut) {
   const uint64_t subSecondNs =
       (remainderTicks * 1000000000ULL) / ppsNominalTicksPerSecond_;
 
-  epochNsUtcOut = (static_cast<uint64_t>(ppsReferenceEpochSec_) + wholeSeconds) * 1000000000ULL + subSecondNs;
+  epochNsUtcOut =
+      (static_cast<uint64_t>(ppsReferenceEpochSec_) + wholeSeconds) * 1000000000ULL +
+      static_cast<uint64_t>(ppsReferenceEpochOffsetNs_) +
+      subSecondNs;
   return true;
 }
 
@@ -453,8 +474,26 @@ bool GnssMaxM10S::ppsEpochUsAtTicks(uint32_t ticks, uint64_t& epochUsUtcOut) con
   }
 
   const uint32_t elapsedTicks = ticks - ppsEdgeTicks_;
-  epochUsUtcOut = static_cast<uint64_t>(ppsReferenceEpochSec_) * 1000000ULL +
-                  ppsTicksToUs(elapsedTicks);
+  const uint64_t epochNsUtc =
+      static_cast<uint64_t>(ppsReferenceEpochSec_) * 1000000000ULL +
+      static_cast<uint64_t>(ppsReferenceEpochOffsetNs_) +
+      ppsTicksToUs(elapsedTicks) * 1000ULL;
+  epochUsUtcOut = epochNsUtc / 1000ULL;
+  return true;
+}
+
+bool GnssMaxM10S::timTpCanAnchorPps(uint64_t& epochNsUtcOut) const {
+  if (!timTpPendingForPps_ ||
+      !timTpData_.valid ||
+      !timTpData_.utcEpochValid ||
+      timTpData_.tpNotLocked) {
+    return false;
+  }
+  if (millis() - timTpData_.receivedMs > kMaxTimTpAgeForPpsMs) {
+    return false;
+  }
+
+  epochNsUtcOut = timTpData_.epochUtcNs;
   return true;
 }
 
@@ -665,6 +704,10 @@ void GnssMaxM10S::monRfSnapshot(GnssMonRfData& out) const {
   }
 }
 
+void GnssMaxM10S::timTpSnapshot(GnssTimTpData& out) const {
+  out = timTpData_;
+}
+
 GnssConstellation GnssMaxM10S::constellationFromUbxGnssId(uint8_t gnssId) {
   if (gnssId == 0) {
     return GNSS_CONSTELLATION_GPS;
@@ -794,9 +837,11 @@ void GnssMaxM10S::handleUbxFrame(uint8_t messageClass,
   }
   constexpr uint8_t UBX_CLASS_NAV = 0x01;
   constexpr uint8_t UBX_CLASS_ACK = 0x05;
+  constexpr uint8_t UBX_CLASS_TIM = 0x0D;
   constexpr uint8_t UBX_CLASS_MON = 0x0A;
   constexpr uint8_t UBX_ID_NAV_PVT = 0x07;
   constexpr uint8_t UBX_ID_NAV_SAT = 0x35;
+  constexpr uint8_t UBX_ID_TIM_TP = 0x01;
   constexpr uint8_t UBX_ID_MON_RF = 0x38;
 
   // ---- UBX-ACK-ACK / UBX-ACK-NAK ----------------------------------------
@@ -850,6 +895,63 @@ void GnssMaxM10S::handleUbxFrame(uint8_t messageClass,
       monRfData_.receivedMs = nowMs;
       monRfData_.valid = true;
     }
+    return;
+  }
+
+  // ---- UBX-TIM-TP (0x0D / 0x01) -----------------------------------------
+  if (messageClass == UBX_CLASS_TIM && messageId == UBX_ID_TIM_TP && payloadLength >= 16) {
+    timTpData_.towMs =
+        static_cast<uint32_t>(payload[0]) |
+        (static_cast<uint32_t>(payload[1]) << 8) |
+        (static_cast<uint32_t>(payload[2]) << 16) |
+        (static_cast<uint32_t>(payload[3]) << 24);
+    timTpData_.towSubMs =
+        static_cast<uint32_t>(payload[4]) |
+        (static_cast<uint32_t>(payload[5]) << 8) |
+        (static_cast<uint32_t>(payload[6]) << 16) |
+        (static_cast<uint32_t>(payload[7]) << 24);
+    timTpData_.qErrPs = static_cast<int32_t>(
+        static_cast<uint32_t>(payload[8]) |
+        (static_cast<uint32_t>(payload[9]) << 8) |
+        (static_cast<uint32_t>(payload[10]) << 16) |
+        (static_cast<uint32_t>(payload[11]) << 24));
+    timTpData_.week =
+        static_cast<uint16_t>(payload[12]) |
+        (static_cast<uint16_t>(payload[13]) << 8);
+    timTpData_.flags = payload[14];
+    timTpData_.refInfo = payload[15];
+    timTpData_.utcTimeBase = (timTpData_.flags & 0x01) != 0;
+    timTpData_.utcAvailable = (timTpData_.flags & 0x02) != 0;
+    timTpData_.qErrInvalid = (timTpData_.flags & 0x10) != 0;
+    timTpData_.tpNotLocked = (timTpData_.flags & 0x20) != 0;
+    timTpData_.appliedQErrNs = 0;
+    timTpData_.utcEpochValid = false;
+    timTpData_.epochUtcNs = 0;
+    if (timTpData_.utcTimeBase && timTpData_.utcAvailable && !timTpData_.tpNotLocked) {
+      const uint64_t towNs =
+          static_cast<uint64_t>(timTpData_.towMs) * 1000000ULL +
+          ((static_cast<uint64_t>(timTpData_.towSubMs) * 1000000ULL + 0x80000000ULL) >> 32);
+      int64_t epochNs =
+          static_cast<int64_t>(UNIX_GPS_EPOCH_OFFSET_SECONDS) * 1000000000LL +
+          static_cast<int64_t>(timTpData_.week) * static_cast<int64_t>(SECONDS_PER_WEEK) * 1000000000LL +
+          static_cast<int64_t>(towNs);
+      if (!timTpData_.qErrInvalid) {
+        const int32_t qErrNs =
+            (timTpData_.qErrPs >= 0)
+                ? static_cast<int32_t>((timTpData_.qErrPs + 500) / 1000)
+                : static_cast<int32_t>((timTpData_.qErrPs - 500) / 1000);
+        timTpData_.appliedQErrNs = qErrNs;
+        epochNs += qErrNs;
+      }
+      if (epochNs > 0) {
+        timTpData_.epochUtcNs = static_cast<uint64_t>(epochNs);
+        timTpData_.utcEpochValid = true;
+      }
+    }
+    timTpData_.receivedMs = nowMs;
+    timTpData_.receivedUs = micros();
+    timTpData_.valid = true;
+    timTpPendingForPps_ = timTpData_.utcEpochValid;
     return;
   }
 

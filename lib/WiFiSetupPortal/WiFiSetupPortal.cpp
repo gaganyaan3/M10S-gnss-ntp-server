@@ -35,6 +35,44 @@ String yesNoLabel(bool value) {
   return value ? F("Yes") : F("No");
 }
 
+String clockStateLabel(GpsClockState state) {
+  switch (state) {
+    case GPS_CLOCK_STATE_ACQUIRING:
+      return F("ACQUIRING");
+    case GPS_CLOCK_STATE_LOCKED:
+      return F("LOCKED");
+    case GPS_CLOCK_STATE_HOLDOVER:
+      return F("HOLDOVER");
+    case GPS_CLOCK_STATE_UNSYNCED:
+    default:
+      return F("UNSYNCED");
+  }
+}
+
+String clockStateDetail(GpsClockState state) {
+  switch (state) {
+    case GPS_CLOCK_STATE_ACQUIRING:
+      return F("NAV-PVT UTC valid; waiting for valid TIM-TP + PPS.");
+    case GPS_CLOCK_STATE_LOCKED:
+      return F("TIM-TP valid, PPS valid, timer disciplined.");
+    case GPS_CLOCK_STATE_HOLDOVER:
+      return F("PPS disappeared; running from last disciplined timer.");
+    case GPS_CLOCK_STATE_UNSYNCED:
+    default:
+      return F("No trustworthy UTC.");
+  }
+}
+
+String holdoverCountdownLabel(uint32_t remainingSeconds) {
+  char buffer[8];
+  snprintf(buffer,
+           sizeof(buffer),
+           "%lu:%02lu",
+           static_cast<unsigned long>(remainingSeconds / 60UL),
+           static_cast<unsigned long>(remainingSeconds % 60UL));
+  return String(buffer);
+}
+
 String antStatusLabel(uint8_t antStatus) {
   switch (antStatus) {
     case 0:
@@ -78,6 +116,12 @@ String jammingStateLabel(uint8_t jammingState) {
     default:
       return String(F("Unknown (")) + String(jammingState) + F(")");
   }
+}
+
+String hexByteLabel(uint8_t value) {
+  char buffer[6];
+  snprintf(buffer, sizeof(buffer), "0x%02X", value);
+  return String(buffer);
 }
 
 String monRfAgcStatusLabel(const GpsDashboardStatus& status) {
@@ -910,7 +954,7 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
     page += F(" checked");
   }
   page += F(">"
-            "<span><strong>NTP holdover after fullyResolved and gnssFixOK</strong><span>Keep answering NTP after a fullyResolved GNSS timestamp with gnssFixOK has been obtained.</span></span></label>"
+            "<span><strong>NTP holdover after PPS with UBX-TIM-TP or gnssFixOK</strong><span>Prefer PPS anchored by UBX-TIM-TP; otherwise keep answering after gnssFixOK GNSS time.</span></span></label>"
             "<label class=\"toggle\"><input type=\"checkbox\" name=\"enable_stats\""
   );
   if (settings.enableStats) {
@@ -1021,6 +1065,8 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
                   ".item{background:rgba(255,255,255,0.05);border-radius:12px;padding:14px}"
                   ".label{display:block;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.56);margin-bottom:6px}"
                   ".value{font-size:18px;font-weight:700;word-break:break-word}"
+                  ".state-value{font-size:28px;font-weight:800;letter-spacing:0}"
+                  ".state-detail{margin-top:6px;color:rgba(255,255,255,0.72);font-size:14px;line-height:1.4}"
                   ".count-btn{width:100%;text-align:left;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.2);"
                     "border-radius:12px;padding:14px;color:#fff;font-size:16px;font-weight:700;cursor:pointer}"
                   ".count-btn:hover{background:rgba(255,255,255,0.1)}"
@@ -1035,7 +1081,25 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
                   "<div class=\"card\"><h1>Stats</h1>"
                   "<p class=\"lead\">Live navigation snapshot rendered with the GNSS Config Dashboard theme.</p>"
                   "<a class=\"action\" href=\"/gnss\">Back to GNSS Config Dashboard</a>"
-                  "</div><div class=\"card\"><h2>UBX-NAV-PVT</h2><div class=\"grid\">"
+                  "</div><div class=\"card\"><h2>Clock state</h2>"
+                  "<div class=\"grid\"><div class=\"item\"><span class=\"label\">Clock state</span><span class=\"state-value\">");
+  page += htmlEscape(clockStateLabel(status.clockState));
+  page += F("</span><div class=\"state-detail\">");
+  page += htmlEscape(clockStateDetail(status.clockState));
+  page += F("</div></div><div class=\"item\"><span class=\"label\">Holdover timeout</span><span class=\"state-value\" id=\"holdover-countdown\"");
+  if (status.clockState == GPS_CLOCK_STATE_HOLDOVER && status.holdoverTimeoutValid) {
+    page += F(" data-remaining=\"");
+    page += htmlEscape(String(status.holdoverRemainingSeconds));
+    page += F("\"");
+  }
+  page += F(">");
+  if (status.clockState == GPS_CLOCK_STATE_HOLDOVER && status.holdoverTimeoutValid) {
+    page += htmlEscape(holdoverCountdownLabel(status.holdoverRemainingSeconds));
+  } else {
+    page += F("--");
+  }
+  page += F("</span></div></div></div>"
+            "<div class=\"card\"><h2>UBX-NAV-PVT</h2><div class=\"grid\">"
                   "<div class=\"item\"><span class=\"label\">Latitude</span><span class=\"value\">");
   page += htmlEscape(latitudeText);
   page += F("</span></div><div class=\"item\"><span class=\"label\">Longitude</span><span class=\"value\">");
@@ -1096,6 +1160,45 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
   page += htmlEscape(status.monRfValid ? String(status.ofsI) : String(F("--")));
   page += F("</span></div><div class=\"item\"><span class=\"label\">ofsQ</span><span class=\"value\">");
   page += htmlEscape(status.monRfValid ? String(status.ofsQ) : String(F("--")));
+  page += F("</span></div></div></div>");
+
+  page += F("<div class=\"card\"><h2>UBX-TIM-TP</h2><div class=\"grid\">"
+            "<div class=\"item\"><span class=\"label\">towMS</span><span class=\"value\">");
+  page += htmlEscape(status.timTpValid ? String(status.timTpTowMs) : String(F("--")));
+  page += F(" ms</span></div><div class=\"item\"><span class=\"label\">towSubMS</span><span class=\"value\">");
+  page += htmlEscape(status.timTpValid ? String(status.timTpTowSubMs) : String(F("--")));
+  page += F("</span></div><div class=\"item\"><span class=\"label\">qErr</span><span class=\"value\">");
+  if (status.timTpValid && !status.timTpQErrInvalid) {
+    page += htmlEscape(String(status.timTpQErrPs));
+    page += F(" ps");
+  } else {
+    page += F("--");
+  }
+  page += F("</span></div><div class=\"item\"><span class=\"label\">week</span><span class=\"value\">");
+  page += htmlEscape(status.timTpValid ? String(status.timTpWeek) : String(F("--")));
+  page += F("</span></div><div class=\"item\"><span class=\"label\">flags</span><span class=\"value\">");
+  page += htmlEscape(status.timTpValid ? hexByteLabel(status.timTpFlags) : String(F("--")));
+  page += F("</span></div><div class=\"item\"><span class=\"label\">refInfo</span><span class=\"value\">");
+  page += htmlEscape(status.timTpValid ? hexByteLabel(status.timTpRefInfo) : String(F("--")));
+  page += F("</span></div><div class=\"item\"><span class=\"label\">UTC base</span><span class=\"value\">");
+  page += htmlEscape(status.timTpValid ? yesNoLabel(status.timTpUtcTimeBase) : String(F("--")));
+  page += F("</span></div><div class=\"item\"><span class=\"label\">UTC available</span><span class=\"value\">");
+  page += htmlEscape(status.timTpValid ? yesNoLabel(status.timTpUtcAvailable) : String(F("--")));
+  page += F("</span></div><div class=\"item\"><span class=\"label\">qErr invalid</span><span class=\"value\">");
+  page += htmlEscape(status.timTpValid ? yesNoLabel(status.timTpQErrInvalid) : String(F("--")));
+  page += F("</span></div><div class=\"item\"><span class=\"label\">TP not locked</span><span class=\"value\">");
+  page += htmlEscape(status.timTpValid ? yesNoLabel(status.timTpTpNotLocked) : String(F("--")));
+  page += F("</span></div><div class=\"item\"><span class=\"label\">UTC epoch ns</span><span class=\"value\">");
+  page += htmlEscape((status.timTpValid && status.timTpUtcEpochValid) ?
+                     String(static_cast<unsigned long long>(status.timTpEpochUtcNs)) :
+                     String(F("--")));
+  page += F("</span></div><div class=\"item\"><span class=\"label\">applied qErr</span><span class=\"value\">");
+  if (status.timTpValid && !status.timTpQErrInvalid) {
+    page += htmlEscape(String(status.timTpAppliedQErrNs));
+    page += F(" ns");
+  } else {
+    page += F("--");
+  }
   page += F("</span></div></div></div>");
 
   page += F("<div class=\"card\"><h2>UBX-NAV-SAT</h2><div class=\"grid\">");
@@ -1173,6 +1276,21 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
             "buttons.forEach(function(btn){"
             "btn.addEventListener('click',function(){openGroup(btn.dataset.target);});"
             "});"
+            "var countdown=document.getElementById('holdover-countdown');"
+            "if(countdown&&countdown.dataset.remaining){"
+            "var remaining=parseInt(countdown.dataset.remaining,10);"
+            "function renderCountdown(){"
+            "var minutes=Math.floor(remaining/60);"
+            "var seconds=remaining%60;"
+            "countdown.textContent=minutes+':'+String(seconds).padStart(2,'0');"
+            "}"
+            "renderCountdown();"
+            "setInterval(function(){"
+            "remaining-=1;"
+            "if(remaining<0){window.location.reload();return;}"
+            "renderCountdown();"
+            "},1000);"
+            "}"
             "})();</script>");
 
   page += F("</div></div></body></html>");

@@ -64,23 +64,23 @@ ntpdate -q <device-ip>
 If no valid GNSS time is available, the NTP server stays silent rather than
 replying with invalid timestamps.
 
-After the first fullyResolved GNSS time with gnssFixOK is seen since boot,
-optional holdover keeps NTP responses available if live PPS or satellite fix is
-temporarily lost.
+After the first valid TIM-TP/PPS lock, optional holdover keeps NTP responses
+available if live PPS or satellite fix is temporarily lost.
 
 #### PPS-Disciplined Clock
 
 The NTP server does not set or re-base its served clock directly from every
-serial NAV-PVT timestamp. NAV-PVT is used to establish and verify the UTC
-second:
+serial NAV-PVT timestamp. UBX-TIM-TP is preferred to establish the UTC time of
+the next PPS edge:
 
 ```text
-The next PPS edge corresponds to UTC second N.
+The next PPS edge corresponds to UTC time N, plus valid qErr correction.
 ```
 
 Once that relationship is known, the PPS edge captured by MCPWM becomes the
 precision timing source. Between PPS edges, the server interpolates from the
-captured PPS tick using the same 80 MHz hardware counter.
+captured PPS tick using the same 80 MHz hardware counter. NAV-PVT remains a
+coarse fallback only when it is fullyResolved and gnssFixOK.
 
 If PPS disappears, the server does not immediately switch to setting time from
 each NAV-PVT message. Holdover continues from the PPS-disciplined timestamp.
@@ -133,7 +133,8 @@ refInfo  = ...
               UBX-TIM-TP
                    │
                    │ tells you which time
-                   │ pulse represents
+                   │ pulse represents;
+                   │ valid qErr is applied
                    ↓
 PPS edge ──────────●───────────
                    ↑
@@ -183,7 +184,7 @@ If upload port is not auto-detected:
 pio run -t upload --upload-port /dev/ttyUSB0
 ```
 
-## future plan: can be added into 
+## future plan: can be added 
 ```
 UBX-NAV-PVT
 UBX-NAV-SAT
@@ -211,11 +212,50 @@ Current timing source healthy?
     PPS arriving
     PPS interval reasonable
     recent valid GNSS information
+
+UBX-TIM-TP
+    TIM-TP = tells you WHICH second
+    PPS    = tells you EXACTLY WHEN that second occurs
+    MCPWM  = measures time BETWEEN PPS pulses
 ```
 - should i keep the COARSE correction (µs) even if PPS is present?
 - Have 3 GNSS NAV-PVT time in microsecond with 60 second window interval GNSS1, GNSS2, GNSS3 , so for starting only it will take 3 min to set this variable, It will be in 3 holdover on 80mhz hardware timer clock, then with PPS keep these 3 values updated and avg them out by dividing 3 then use this time to server as NTP. Keep updating these values 
 - option to force update GNSS NAV-PVT time from dashboard
 - GNSS UTC Epoch (µs) on dashboard rather than direct update have avg for 60 second GNSS NAV-PVT . issue with this is dashboard value will update every 60 second. Can have holdover with eps milis()
+- Discipline the ESP32 oscillator MCPWM clock diff between PPS tick 1 and 2 should be ~80Mhz and compasate with cpu temp
+
+```
+If you assume exactly 80 MHz, but your measured PPS interval is 79,998,037 ticks, your clock is slow by:
+80,000,000 - 79,998,037 = 1,963 ticks/sec , thats 1963×12.5=24,537.5 ns = 24.5 microsec slow every sec
+PPS disappears (holdover): it does accumulate if you assume exactly 80 MHz. 1 hour  = ~88 ms
+```
+- Track clock state explicitly
+
+```
+UNSYNCED
+   ↓
+ACQUIRING
+   ↓
+LOCKED
+   ↓
+HOLDOVER
+----------------------
+UNSYNCED
+No trustworthy UTC.
+
+ACQUIRING
+NAV-PVT UTC is valid.
+Waiting for valid TIM-TP + PPS.
+
+LOCKED
+TIM-TP valid.
+PPS valid.
+Timer being disciplined.
+
+HOLDOVER
+PPS disappeared.
+Running from previously measured timer frequency.
+```
 
 ## Project Structure
 

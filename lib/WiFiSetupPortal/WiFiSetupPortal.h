@@ -14,6 +14,13 @@ struct GpsDashboardSettings {
   bool displayEnabled = true;
 };
 
+enum GpsClockState : uint8_t {
+  GPS_CLOCK_STATE_UNSYNCED = 0,
+  GPS_CLOCK_STATE_ACQUIRING = 1,
+  GPS_CLOCK_STATE_LOCKED = 2,
+  GPS_CLOCK_STATE_HOLDOVER = 3,
+};
+
 struct GpsDashboardStatus {
   static constexpr size_t MAX_NAV_SAT_DETAILS = 48;
 
@@ -34,6 +41,9 @@ struct GpsDashboardStatus {
   bool ppsAligned = false;
   bool ppsPeriodValid = false;
   double ppsPeriodSeconds = 0.0;
+  GpsClockState clockState = GPS_CLOCK_STATE_UNSYNCED;
+  bool holdoverTimeoutValid = false;
+  uint32_t holdoverRemainingSeconds = 0;
   bool gpsTimeValid = false;
   uint64_t gpsEpochUtcMicros = 0;
   uint32_t coarseEpochUseCount = 0;
@@ -55,6 +65,20 @@ struct GpsDashboardStatus {
   bool monRfCfgValsetNak = false;
   bool monRfCfgAntAck = false;
   bool monRfCfgAntNak = false;
+  bool timTpValid = false;
+  uint32_t timTpTowMs = 0;
+  uint32_t timTpTowSubMs = 0;
+  int32_t timTpQErrPs = 0;
+  uint16_t timTpWeek = 0;
+  uint8_t timTpFlags = 0;
+  uint8_t timTpRefInfo = 0;
+  bool timTpUtcTimeBase = false;
+  bool timTpUtcAvailable = false;
+  bool timTpQErrInvalid = false;
+  bool timTpTpNotLocked = false;
+  bool timTpUtcEpochValid = false;
+  uint64_t timTpEpochUtcNs = 0;
+  int32_t timTpAppliedQErrNs = 0;
   bool ntpReady = false;
   bool holdoverUtcValid = false;
   uint64_t holdoverEpochUtcMicros = 0;

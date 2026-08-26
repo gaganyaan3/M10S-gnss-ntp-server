@@ -22,6 +22,7 @@ constexpr uint32_t DISPLAY_TOGGLE_DEBOUNCE_MS = 40UL;
 constexpr uint32_t DISPLAY_TOGGLE_MAX_HOLD_MS = 400UL;
 constexpr uint32_t WIFI_RESET_HOLD_MS = 3000UL;
 constexpr uint32_t RESET_OVERLAY_DELAY_MS = 500UL;
+constexpr uint32_t NTP_HOLDOVER_TIMEOUT_MS = 1UL * 60UL * 1000UL; //10UL=10min
 constexpr uint8_t DISPLAY_PREF_MAGIC = 0xA7;
 constexpr uint32_t GNSS_DASHBOARD_CONFIG_MAGIC = 0x47505331UL;
 
@@ -102,6 +103,8 @@ bool ntpGnssFixOkSinceBoot = false;
 int64_t ntpHoldoverCorrectionOffsetUs = 0;
 uint64_t ntpHoldoverBaseEpochUsUtc = 0;
 uint64_t ntpHoldoverBaseTicks = 0;
+bool ntpHoldoverPpsDisciplined = false;
+uint32_t ntpHoldoverDeadlineMs = 0;
 uint64_t ppsCaptureTicksHigh = 0;
 uint32_t ppsCaptureLastNowTicks = 0;
 bool ppsCaptureTicks64Initialized = false;
@@ -161,6 +164,25 @@ void anchorNtpHoldoverRawUs(uint64_t epochUsUtc) {
   ntpHoldoverValid = true;
   ntpHoldoverBaseEpochUsUtc = epochUsUtc;
   ntpHoldoverBaseTicks = ppsCaptureNowTicks64();
+}
+
+void refreshNtpHoldoverTimeout() {
+  ntpHoldoverPpsDisciplined = true;
+  ntpHoldoverDeadlineMs = millis() + NTP_HOLDOVER_TIMEOUT_MS;
+}
+
+bool ntpHoldoverRemainingSeconds(uint32_t& remainingSecondsOut) {
+  if (!ntpHoldoverPpsDisciplined) {
+    return false;
+  }
+
+  const int32_t remainingMs = static_cast<int32_t>(ntpHoldoverDeadlineMs - millis());
+  if (remainingMs <= 0) {
+    return false;
+  }
+
+  remainingSecondsOut = static_cast<uint32_t>((remainingMs - 1) / 1000L);
+  return true;
 }
 
 void anchorNtpHoldoverUs(uint64_t epochUsUtc) {
@@ -294,7 +316,7 @@ bool updateCoarseCorrection(uint64_t referenceEpochUsUtc,
                             bool applyToHoldover,
                             bool updateServedEpoch,
                             uint64_t& epochUsUtcInOut) {
-  constexpr int64_t MAX_PPS_COARSE_DELTA_US = 50000; //50ms
+  constexpr int64_t MAX_PPS_COARSE_DELTA_US = 5000; //50ms, calles updateCoarseCorrection()
   constexpr unsigned long COARSE_CORRECTION_WINDOW_MS = 60000UL;
 
   if (gps.ppsRecentlySeen()) {
@@ -386,13 +408,16 @@ bool currentGpsNtpEpochUs(uint64_t& epochUsUtcOut) {
     anchorNtpHoldoverUs(qualifiedGnssEpochUs);
   }
 
-  // Normal operation: NAV-PVT establishes the UTC second for the next PPS
-  // edge, then PPS/hardware ticks provide the precise NTP timestamp. This also
-  // covers short PPS outages by continuing from the last PPS edge with the
-  // local oscillator for a bounded interval.
+  // Normal operation: UBX-TIM-TP establishes the UTC nanosecond timestamp for
+  // the next PPS edge, then PPS/hardware ticks provide the precise NTP
+  // timestamp. NAV-PVT is only a coarse fallback. This also covers short PPS
+  // outages by continuing from the last PPS edge with the local oscillator for
+  // a bounded interval.
   uint64_t epochNsUtc = 0;
-  if (gps.currentUtcEpochNsPps(epochNsUtc)) {
+  if (gps.currentUtcEpochNsPps(epochNsUtc) && gps.ppsRecentlySeen()) {
     epochUsUtcOut = epochNsUtc / 1000ULL;
+    ntpGnssFixOkSinceBoot = true;
+    refreshNtpHoldoverTimeout();
     anchorNtpHoldoverUs(epochUsUtcOut);
     // Only let NAV-PVT coarse correction act during a PPS outage. While PPS is
     // fresh, PPS/hardware ticks remain authoritative.
@@ -405,14 +430,22 @@ bool currentGpsNtpEpochUs(uint64_t& epochUsUtcOut) {
   }
 
   if (gpsDashboardSettings.ntpHoldoverEnabled && ntpHoldoverValid) {
+    uint32_t remainingSeconds = 0;
+    if (!ntpHoldoverRemainingSeconds(remainingSeconds)) {
+      ntpHoldoverValid = false;
+      return false;
+    }
+
     if (!currentNtpHoldoverUs(epochUsUtcOut)) {
       return false;
     }
 
-    // NAV-PVT can still provide a coarse correction point. Once a fresh sample
-    // crosses the threshold, collect all fresh deltas for a full minute and
-    // apply only a small portion of the average to holdover.
-    updateCoarseCorrection(epochUsUtcOut, true, true, epochUsUtcOut);
+    // During HOLDOVER, run only from the last PPS-disciplined timer frequency.
+    // Do not let NAV-PVT coarse correction pull the served clock until this
+    // timeout has expired and the state machine falls back to ACQUIRING/UNSYNCED.
+    if (coarseCorrectionDeltaCount > 0) {
+      resetCoarseCorrectionWindow();
+    }
     return true;
   }
 
@@ -427,6 +460,25 @@ bool currentGpsNtpEpochMs(uint64_t& epochMsUtcOut) {
 
   epochMsUtcOut = epochUsUtc / 1000ULL;
   return true;
+}
+
+GpsClockState currentGpsClockState(const GpsDashboardStatus& status) {
+  if (status.timTpValid &&
+      status.timTpUtcEpochValid &&
+      !status.timTpTpNotLocked &&
+      status.ppsAligned) {
+    return GPS_CLOCK_STATE_LOCKED;
+  }
+
+  if (status.holdoverUtcValid && !status.ppsAligned) {
+    return GPS_CLOCK_STATE_HOLDOVER;
+  }
+
+  if (status.gpsTimeValid) {
+    return GPS_CLOCK_STATE_ACQUIRING;
+  }
+
+  return GPS_CLOCK_STATE_UNSYNCED;
 }
 
 void processPpsCapture() {
@@ -448,19 +500,27 @@ void processPpsCapture() {
   gps.onPpsEdge(edgeTicksSnapshot, elapsedPulses);
 
   const uint32_t diffTicks = edgeTicksSnapshot - previousEdgeTicksSnapshot;
+  const int32_t fqDiffTicks = static_cast<int32_t>(PPS_MCPWM_TICKS_PER_SECOND) -
+                              static_cast<int32_t>(diffTicks);
   const double periodSeconds = static_cast<double>(diffTicks) / PPS_MCPWM_TICKS_PER_SECOND;
+  const uint64_t periodMicros =
+      (static_cast<uint64_t>(diffTicks) * 1000000ULL) / PPS_MCPWM_TICKS_PER_SECOND;
   if (pulseCountSnapshot > 1) {
     lastPpsPeriodSeconds = periodSeconds;
     lastPpsPeriodValid = true;
   }
-  Serial.printf("PPS pulse #%lu at %lu ticks | PPS: %.12f s",
+  Serial.printf("PPS pulse #%lu %lu ticks | PPS: %llu us",
                 static_cast<unsigned long>(pulseCountSnapshot),
                 static_cast<unsigned long>(edgeTicksSnapshot),
-                periodSeconds);
+                static_cast<unsigned long long>(periodMicros));
   if (elapsedPulses > 1) {
     Serial.printf(" | skipped main-loop pulses: %lu",
                   static_cast<unsigned long>(elapsedPulses - 1));
   }
+  Serial.printf(" | fq=%lu | fqdiff=%ld | CPU: %.1f C",
+                static_cast<unsigned long>(diffTicks),
+                static_cast<long>(fqDiffTicks),
+                currentInternalTemperatureC);
   Serial.println();
 }
 
@@ -509,10 +569,33 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
     statusOut.monRfCfgAntAck = monRf.cfgAntAck;
     statusOut.monRfCfgAntNak = monRf.cfgAntNak;
   }
+  {
+    GnssTimTpData timTp;
+    gps.timTpSnapshot(timTp);
+    statusOut.timTpValid = timTp.valid;
+    statusOut.timTpTowMs = timTp.towMs;
+    statusOut.timTpTowSubMs = timTp.towSubMs;
+    statusOut.timTpQErrPs = timTp.qErrPs;
+    statusOut.timTpWeek = timTp.week;
+    statusOut.timTpFlags = timTp.flags;
+    statusOut.timTpRefInfo = timTp.refInfo;
+    statusOut.timTpUtcTimeBase = timTp.utcTimeBase;
+    statusOut.timTpUtcAvailable = timTp.utcAvailable;
+    statusOut.timTpQErrInvalid = timTp.qErrInvalid;
+    statusOut.timTpTpNotLocked = timTp.tpNotLocked;
+    statusOut.timTpUtcEpochValid = timTp.utcEpochValid;
+    statusOut.timTpEpochUtcNs = timTp.epochUtcNs;
+    statusOut.timTpAppliedQErrNs = timTp.appliedQErrNs;
+  }
   statusOut.holdoverUtcValid = ntpHoldoverValid;
   if (statusOut.holdoverUtcValid) {
-    statusOut.holdoverUtcValid = currentNtpHoldoverUs(statusOut.holdoverEpochUtcMicros);
+    statusOut.holdoverTimeoutValid =
+        ntpHoldoverRemainingSeconds(statusOut.holdoverRemainingSeconds);
+    statusOut.holdoverUtcValid =
+        statusOut.holdoverTimeoutValid &&
+        currentNtpHoldoverUs(statusOut.holdoverEpochUtcMicros);
   }
+  statusOut.clockState = currentGpsClockState(statusOut);
   statusOut.gpsUartLabel = F("GPIO22 <- GNSS TX, GPIO21 -> GNSS RX");
   statusOut.ppsPinLabel = F("GPIO27");
   statusOut.gpsBaudRate = GNSS_BAUD_RATE;
