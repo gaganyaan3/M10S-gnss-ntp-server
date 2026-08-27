@@ -278,17 +278,13 @@ void GnssMaxM10S::onPpsEdge(uint32_t edgeTicks, uint32_t elapsedPulses) {
     elapsedPulses = 1;
   }
 
+  const uint32_t nowMs = millis();
+  const bool previousPpsAnchorFresh =
+      ppsAligned_ && (nowMs - ppsEdgeMs_ <= kMaxPpsHoldoverMs);
+
   uint64_t timTpEpochNsUtc = 0;
   const bool timTpCanAnchor =
       elapsedPulses == 1 && timTpCanAnchorPps(timTpEpochNsUtc);
-  const bool pvtCanAnchorPps =
-      navPvtData_.valid &&
-      navPvtData_.utcEpochValid &&
-      navPvtData_.validDate &&
-      navPvtData_.validTime &&
-      navPvtData_.fullyResolved &&
-      navPvtData_.gnssFixOK &&
-      (millis() - navPvtData_.receivedMs <= kMaxPvtAgeForPpsMs);
 
   if (timTpCanAnchor) {
     // TIM-TP reports the time of the next TIMEPULSE0 edge. Use it as the
@@ -296,22 +292,18 @@ void GnssMaxM10S::onPpsEdge(uint32_t edgeTicks, uint32_t elapsedPulses) {
     ppsReferenceEpochSec_ = static_cast<uint32_t>(timTpEpochNsUtc / 1000000000ULL);
     ppsReferenceEpochOffsetNs_ = static_cast<int32_t>(timTpEpochNsUtc % 1000000000ULL);
     timTpPendingForPps_ = false;
-  } else if (pvtCanAnchorPps) {
-    // Fallback: NAV-PVT gives the coarse UTC second from the serial time
-    // solution. The next captured PPS edge starts the next UTC second.
-    ppsReferenceEpochSec_ = navPvtData_.epochUtc + elapsedPulses;
-    ppsReferenceEpochOffsetNs_ = 0;
-  } else if (ppsAligned_) {
+  } else if (previousPpsAnchorFresh) {
     // Once anchored, PPS remains the precision source. A late/missing time
     // message should not break lock; each captured PPS advances by pulse count.
     ppsReferenceEpochSec_ += elapsedPulses;
   } else {
+    ppsAligned_ = false;
     ppsHasPreviousEdge_ = false;
     return;
   }
 
   ppsEdgeTicks_ = edgeTicks;
-  ppsEdgeMs_ = millis();
+  ppsEdgeMs_ = nowMs;
   ppsAligned_ = true;
   ppsHasPreviousEdge_ = true;
 }

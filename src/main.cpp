@@ -22,7 +22,7 @@ constexpr uint32_t DISPLAY_TOGGLE_DEBOUNCE_MS = 40UL;
 constexpr uint32_t DISPLAY_TOGGLE_MAX_HOLD_MS = 400UL;
 constexpr uint32_t WIFI_RESET_HOLD_MS = 3000UL;
 constexpr uint32_t RESET_OVERLAY_DELAY_MS = 500UL;
-constexpr uint32_t NTP_HOLDOVER_TIMEOUT_MS = 1UL * 60UL * 1000UL; //10UL=10min
+constexpr uint32_t NTP_HOLDOVER_TIMEOUT_MS = 1440UL * 60UL * 1000UL; //10UL=10min just for comment
 constexpr uint8_t DISPLAY_PREF_MAGIC = 0xA7;
 constexpr uint32_t GNSS_DASHBOARD_CONFIG_MAGIC = 0x47505331UL;
 
@@ -50,7 +50,8 @@ constexpr mcpwm_unit_t PPS_MCPWM_UNIT = MCPWM_UNIT_0;
 constexpr mcpwm_io_signals_t PPS_MCPWM_CAP_IO = MCPWM_CAP_0;
 constexpr mcpwm_capture_channel_id_t PPS_MCPWM_CAP_CHANNEL = MCPWM_SELECT_CAP0;
 constexpr uint8_t PPS_MCPWM_NOW_CHANNEL = 1;
-constexpr uint32_t PPS_MCPWM_TICKS_PER_SECOND = 80000000UL;
+//constexpr uint32_t PPS_MCPWM_TICKS_PER_SECOND = 80000000UL;  // don't delete this line
+constexpr uint32_t PPS_MCPWM_TICKS_PER_SECOND = 79998000UL; // used calibrated MCPWM - don't delete this line
 
 const char* NTP_SERVER_1 = "time.cloudflare.com";
 const char* NTP_SERVER_2 = "time.google.com";
@@ -99,7 +100,6 @@ unsigned long flashButtonLastEdgeMs = 0;
 unsigned long flashButtonPressedAtMs = 0;
 GpsDashboardSettings gpsDashboardSettings;
 bool ntpHoldoverValid = false;
-bool ntpGnssFixOkSinceBoot = false;
 int64_t ntpHoldoverCorrectionOffsetUs = 0;
 uint64_t ntpHoldoverBaseEpochUsUtc = 0;
 uint64_t ntpHoldoverBaseTicks = 0;
@@ -402,31 +402,19 @@ bool updateCoarseCorrection(uint64_t referenceEpochUsUtc,
 }
 
 bool currentGpsNtpEpochUs(uint64_t& epochUsUtcOut) {
-  uint64_t qualifiedGnssEpochUs = 0;
-  if (!ntpGnssFixOkSinceBoot && gpsNavPvtCoarseEpochUs(qualifiedGnssEpochUs)) {
-    ntpGnssFixOkSinceBoot = true;
-    anchorNtpHoldoverUs(qualifiedGnssEpochUs);
-  }
-
   // Normal operation: UBX-TIM-TP establishes the UTC nanosecond timestamp for
   // the next PPS edge, then PPS/hardware ticks provide the precise NTP
-  // timestamp. NAV-PVT is only a coarse fallback. This also covers short PPS
-  // outages by continuing from the last PPS edge with the local oscillator for
-  // a bounded interval.
+  // timestamp. Short PPS outages continue from the last TIM-TP/PPS anchor with
+  // the local oscillator for a bounded interval.
   uint64_t epochNsUtc = 0;
   if (gps.currentUtcEpochNsPps(epochNsUtc) && gps.ppsRecentlySeen()) {
     epochUsUtcOut = epochNsUtc / 1000ULL;
-    ntpGnssFixOkSinceBoot = true;
     refreshNtpHoldoverTimeout();
     anchorNtpHoldoverUs(epochUsUtcOut);
     // Only let NAV-PVT coarse correction act during a PPS outage. While PPS is
     // fresh, PPS/hardware ticks remain authoritative.
     updateCoarseCorrection(epochUsUtcOut, true, false, epochUsUtcOut);
     return true;
-  }
-
-  if (!ntpGnssFixOkSinceBoot) {
-    return false;
   }
 
   if (gpsDashboardSettings.ntpHoldoverEnabled && ntpHoldoverValid) {
@@ -1118,10 +1106,10 @@ void loop() {
     if (!wasGpsValid) {
       Serial.println("GNSS fix acquired");
     }
-    Serial.printf(
-        "GNSS time IST: %s | sats: %lu\n",
-        gpsLine,
-        static_cast<unsigned long>(satCount));
+    // Serial.printf(
+    //     "GNSS time IST: %s | sats: %lu\n",
+    //     gpsLine,
+    //     static_cast<unsigned long>(satCount));
     wasGpsValid = true;
   } else {
     snprintf(gpsLine, sizeof(gpsLine), "No GNSS fix");

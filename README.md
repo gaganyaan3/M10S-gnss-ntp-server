@@ -199,11 +199,6 @@ UBX-MON-RF
     antenna status
     jamming/interference information
 
-UTC identity valid?
-    validDate
-    validTime
-    fullyResolved
-
 Current GNSS solution valid?
     gnssFixOK
     fixType >= 2/3 as appropriate
@@ -218,16 +213,18 @@ UBX-TIM-TP
     PPS    = tells you EXACTLY WHEN that second occurs
     MCPWM  = measures time BETWEEN PPS pulses
 ```
-- should i keep the COARSE correction (µs) even if PPS is present?
-- Have 3 GNSS NAV-PVT time in microsecond with 60 second window interval GNSS1, GNSS2, GNSS3 , so for starting only it will take 3 min to set this variable, It will be in 3 holdover on 80mhz hardware timer clock, then with PPS keep these 3 values updated and avg them out by dividing 3 then use this time to server as NTP. Keep updating these values 
+- should i keep the COARSE correction (µs) even if PPS is present? NO
 - option to force update GNSS NAV-PVT time from dashboard
-- GNSS UTC Epoch (µs) on dashboard rather than direct update have avg for 60 second GNSS NAV-PVT . issue with this is dashboard value will update every 60 second. Can have holdover with eps milis()
+- start serve ntp query fast with validDate, validTime, fullyResolved ?
 - Discipline the ESP32 oscillator MCPWM clock diff between PPS tick 1 and 2 should be ~80Mhz and compasate with cpu temp
-
+- Typical coax with velocity factor 0.66–0.85: about **4–5 ns per meter*
 ```
+PPS_MCPWM_TICKS_PER_SECOND = 80000000UL;
+ppsMcpwmCalibratedTicksPerSecond = 79998000UL; // calibrated MCPWM
 If you assume exactly 80 MHz, but your measured PPS interval is 79,998,037 ticks, your clock is slow by:
 80,000,000 - 79,998,037 = 1,963 ticks/sec , thats 1963×12.5=24,537.5 ns = 24.5 microsec slow every sec
 PPS disappears (holdover): it does accumulate if you assume exactly 80 MHz. 1 hour  = ~88 ms
+calibrated 79,998,038 - 79998000  = 38 = 475ns slow/sec = 1.71ms per hours
 ```
 - Track clock state explicitly
 

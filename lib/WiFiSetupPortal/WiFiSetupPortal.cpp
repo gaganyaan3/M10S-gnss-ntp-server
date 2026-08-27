@@ -954,7 +954,7 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
     page += F(" checked");
   }
   page += F(">"
-            "<span><strong>NTP holdover after PPS with UBX-TIM-TP or gnssFixOK</strong><span>Prefer PPS anchored by UBX-TIM-TP; otherwise keep answering after gnssFixOK GNSS time.</span></span></label>"
+            "<span><strong>NTP holdover after PPS with UBX-TIM-TP</strong><span>Keep answering from the last TIM-TP anchored PPS time during short PPS outages.</span></span></label>"
             "<label class=\"toggle\"><input type=\"checkbox\" name=\"enable_stats\""
   );
   if (settings.enableStats) {
