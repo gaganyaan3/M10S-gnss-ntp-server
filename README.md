@@ -256,7 +256,17 @@ Running from previously measured timer frequency.
 
 ## Project Structure
 
-- [src/main.cpp](src/main.cpp): main application loop, OLED rendering, GNSS/NTP integration, PPS hardware capture (MCPWM)
+- [src/main.cpp](src/main.cpp): firmware orchestration — setup wiring, loop polling order, Wi-Fi/NMEA/NTP callbacks, dashboard data assembly
+- [lib/PpsCapture/PpsCapture.h](lib/PpsCapture/PpsCapture.h): MCPWM PPS capture interface, pulse snapshots, tick source API
+- [lib/PpsCapture/PpsCapture.cpp](lib/PpsCapture/PpsCapture.cpp): PPS capture ISR, software-forced "now" capture, 64-bit tick extension, period stats
+- [lib/GnssClock/GnssClock.h](lib/GnssClock/GnssClock.h): GNSS-backed NTP clock interface, holdover diagnostics, clock-state helper
+- [lib/GnssClock/GnssClock.cpp](lib/GnssClock/GnssClock.cpp): PPS-disciplined NTP time selection, holdover, coarse correction averaging
+- [lib/DashboardStore/DashboardStore.h](lib/DashboardStore/DashboardStore.h): EEPROM-backed dashboard/display settings API
+- [lib/DashboardStore/DashboardStore.cpp](lib/DashboardStore/DashboardStore.cpp): display preference and GNSS dashboard config persistence
+- [lib/OledClockDisplay/OledClockDisplay.h](lib/OledClockDisplay/OledClockDisplay.h): OLED display model and IST formatting helpers
+- [lib/OledClockDisplay/OledClockDisplay.cpp](lib/OledClockDisplay/OledClockDisplay.cpp): SH1106 boot screen, reset overlay, clock page rendering
+- [lib/BootButton/BootButton.h](lib/BootButton/BootButton.h): BOOT button debounce and press-event interface
+- [lib/BootButton/BootButton.cpp](lib/BootButton/BootButton.cpp): short/long press detection implementation
 - [lib/GnssMaxM10S/GnssMaxM10S.h](lib/GnssMaxM10S/GnssMaxM10S.h): GNSS parser/clock interface — hardware tick source config, ns-resolution PPS time query
 - [lib/GnssMaxM10S/GnssMaxM10S.cpp](lib/GnssMaxM10S/GnssMaxM10S.cpp): GNSS UART polling, NAV-PVT UTC-second anchoring, PPS-assisted time interpolation
 - [lib/NmeaServer/NmeaServer.h](lib/NmeaServer/NmeaServer.h): TCP NMEA broadcast server (port 10110)
