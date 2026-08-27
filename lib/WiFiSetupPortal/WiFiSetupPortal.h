@@ -117,9 +117,10 @@ struct GpsDashboardStatus {
   String gpsUartLabel;
   String ppsPinLabel;
   uint32_t gpsBaudRate = 9600;
-  uint16_t nmeaPort = 0;
-  uint16_t ntpPort = 0;  float cpuUtilizationPercent = 0.0f;
-  float internalTemperatureC = 0.0f;};
+  float cpuUtilizationPercent = 0.0f;
+  float cpuUtilizationPeakPercent = 0.0f;
+  float internalTemperatureC = 0.0f;
+};
 
 // Captive-portal Wi-Fi provisioning for ESP32.
 // On first boot (no saved credentials) the device starts an open hotspot named

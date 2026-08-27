@@ -850,7 +850,8 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
     holdoverUtcEpoch = formatEpochMicros(status.holdoverEpochUtcMicros);
   }
 
-  String cpuText = String(status.cpuUtilizationPercent, 1) + F("% CPU");
+  String cpuText = String(status.cpuUtilizationPercent, 1) + F("% avg / ") +
+                   String(status.cpuUtilizationPeakPercent, 1) + F("% peak");
   String temperatureText = F("--");
   if (status.internalTemperatureC > -40.0f && status.internalTemperatureC < 120.0f) {
     temperatureText = String(status.internalTemperatureC, 1) + F("°C");
@@ -912,10 +913,6 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
   page += htmlEscape(gpsUtcEpoch);
   page += F("</span></div><div class=\"item\"><span class=\"label\">Holdover UTC <span class=\"unit\">(µs)</span></span><span class=\"value\">");
   page += htmlEscape(holdoverUtcEpoch);
-  page += F("</span></div><div class=\"item\"><span class=\"label\">NMEA Port</span><span class=\"value\">");
-  page += htmlEscape(String(status.nmeaPort));
-  page += F("</span></div><div class=\"item\"><span class=\"label\">NTP Port</span><span class=\"value\">");
-  page += htmlEscape(String(status.ntpPort));
   page += F("</span></div><div class=\"item\"><span class=\"label\">NTP Ready</span><span class=\"value\">");
   page += status.ntpReady ? F("Yes") : F("No");
   page += F("</span></div>"

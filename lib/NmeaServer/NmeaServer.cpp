@@ -37,6 +37,17 @@ void NmeaServer::poll() {
 }
 
 void NmeaServer::broadcastLine(const String& line) {
+  bool hasClient = false;
+  for (uint8_t i = 0; i < MAX_CLIENTS; ++i) {
+    if (clients_[i] && clients_[i].connected()) {
+      hasClient = true;
+      break;
+    }
+  }
+  if (!hasClient) {
+    return;
+  }
+
   const String outputLine = lineTransformer_ ? lineTransformer_(line) : line;
   for (uint8_t i = 0; i < MAX_CLIENTS; ++i) {
     if (clients_[i] && clients_[i].connected()) {

@@ -147,7 +147,7 @@ http://<device-ip>/gnss
 ```
 
 Dashboard features:
-- Runtime GNSS status (satellites, GNSS epoch, service ports)
+- Runtime GNSS status (satellites, GNSS epoch, PPS, NTP readiness)
 - Raw NMEA logging toggle (saved in NVS Preferences)
 - NTP holdover toggle (saved in NVS Preferences)
 - Display enable toggle (saved in NVS Preferences)

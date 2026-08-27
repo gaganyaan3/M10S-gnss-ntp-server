@@ -19,6 +19,9 @@ namespace {
 constexpr uint32_t DISPLAY_INTERVAL_MS = 1000UL;
 constexpr uint32_t RESET_OVERLAY_DELAY_MS = 500UL;
 constexpr uint32_t WIFI_RESET_HOLD_MS = 3000UL;
+constexpr uint32_t MAIN_LOOP_IDLE_DELAY_MS = 1UL;
+constexpr uint64_t CPU_SAMPLE_INTERVAL_US = 100000ULL;
+constexpr uint8_t CPU_REPORT_SAMPLE_COUNT = 10;
 
 constexpr uint8_t I2C_SDA_PIN = 32;
 constexpr uint8_t I2C_SCL_PIN = 33;
@@ -51,9 +54,13 @@ bool holdoverClockValid = false;
 uint32_t holdoverBaseEpochUtc = 0;
 unsigned long holdoverSetAtMs = 0;
 float currentCpuUtilizationPercent = 0.0f;
+float currentCpuUtilizationPeakPercent = 0.0f;
 float currentInternalTemperatureC = 0.0f;
-uint64_t cpuUtilWindowStartUs = 0;
-uint64_t cpuUtilBusyUs = 0;
+uint64_t cpuSampleWindowStartUs = 0;
+uint64_t cpuSampleBusyUs = 0;
+float cpuReportSampleSumPercent = 0.0f;
+float cpuReportSamplePeakPercent = 0.0f;
+uint8_t cpuReportSamples = 0;
 
 void applyGpsDashboardSettings() {
   gps.enableRawLogging(gpsDashboardSettings.rawLoggingEnabled);
@@ -150,9 +157,8 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
   statusOut.gpsUartLabel = F("GPIO22 <- GNSS TX, GPIO21 -> GNSS RX");
   statusOut.ppsPinLabel = F("GPIO27");
   statusOut.gpsBaudRate = GNSS_BAUD_RATE;
-  statusOut.nmeaPort = NmeaServer::DEFAULT_PORT;
-  statusOut.ntpPort = NtpServer::DEFAULT_PORT;
   statusOut.cpuUtilizationPercent = currentCpuUtilizationPercent;
+  statusOut.cpuUtilizationPeakPercent = currentCpuUtilizationPeakPercent;
   statusOut.internalTemperatureC = currentInternalTemperatureC;
 
   {
@@ -263,21 +269,39 @@ float readEspTemperatureC() {
 }
 
 void updateCpuUtilization(uint64_t loopBusyUs) {
-  if (cpuUtilWindowStartUs == 0) {
-    cpuUtilWindowStartUs = micros();
+  const uint64_t nowUs = micros();
+  if (cpuSampleWindowStartUs == 0) {
+    cpuSampleWindowStartUs = nowUs;
   }
 
-  cpuUtilBusyUs += loopBusyUs;
-  const uint64_t elapsedUs = micros() - cpuUtilWindowStartUs;
-  if (elapsedUs >= 1000000ULL) {
-    const float busyRatio = static_cast<float>(cpuUtilBusyUs) / static_cast<float>(elapsedUs);
-    currentCpuUtilizationPercent = busyRatio * 100.0f;
-    if (currentCpuUtilizationPercent > 100.0f) {
-      currentCpuUtilizationPercent = 100.0f;
-    }
+  cpuSampleBusyUs += loopBusyUs;
+  const uint64_t sampleElapsedUs = nowUs - cpuSampleWindowStartUs;
+  if (sampleElapsedUs < CPU_SAMPLE_INTERVAL_US) {
+    return;
+  }
+
+  float samplePercent =
+      (static_cast<float>(cpuSampleBusyUs) / static_cast<float>(sampleElapsedUs)) * 100.0f;
+  if (samplePercent > 100.0f) {
+    samplePercent = 100.0f;
+  }
+
+  cpuReportSampleSumPercent += samplePercent;
+  if (samplePercent > cpuReportSamplePeakPercent) {
+    cpuReportSamplePeakPercent = samplePercent;
+  }
+  ++cpuReportSamples;
+
+  cpuSampleBusyUs = 0;
+  cpuSampleWindowStartUs = nowUs;
+
+  if (cpuReportSamples >= CPU_REPORT_SAMPLE_COUNT) {
+    currentCpuUtilizationPercent = cpuReportSampleSumPercent / cpuReportSamples;
+    currentCpuUtilizationPeakPercent = cpuReportSamplePeakPercent;
     currentInternalTemperatureC = readEspTemperatureC();
-    cpuUtilBusyUs = 0;
-    cpuUtilWindowStartUs = micros();
+    cpuReportSampleSumPercent = 0.0f;
+    cpuReportSamplePeakPercent = 0.0f;
+    cpuReportSamples = 0;
   }
 }
 
@@ -539,4 +563,5 @@ void loop() {
   }
 
   updateCpuUtilization(micros() - loopStartUs);
+  delay(MAIN_LOOP_IDLE_DELAY_MS);
 }
