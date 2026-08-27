@@ -1,59 +1,98 @@
 #include "DashboardStore.h"
 
-#include <EEPROM.h>
+#include <Preferences.h>
+
+namespace {
+
+constexpr const char* DASHBOARD_PREFS_NAMESPACE = "gnss_dash";
+constexpr const char* DISPLAY_KEY = "display";
+constexpr const char* RAW_LOGGING_KEY = "raw";
+constexpr const char* NTP_HOLDOVER_KEY = "holdover";
+constexpr const char* STATS_KEY = "stats";
+constexpr const char* LOCATION_KEY = "location";
+
+}  // namespace
 
 void DashboardStore::begin() {
-  EEPROM.begin(WiFiSetupPortal::EEPROM_BYTES);
 }
 
 bool DashboardStore::loadDisplayEnabled(bool& enabledOut) {
   begin();
-  const uint8_t magic = EEPROM.read(WiFiSetupPortal::DISPLAY_PREF_ADDR);
-  if (magic != kDisplayPrefMagic) {
+
+  Preferences prefs;
+  if (!prefs.begin(DASHBOARD_PREFS_NAMESPACE, true)) {
     enabledOut = true;
     return false;
   }
 
-  enabledOut = EEPROM.read(WiFiSetupPortal::DISPLAY_PREF_ADDR + 1) != 0;
+  if (!prefs.isKey(DISPLAY_KEY)) {
+    prefs.end();
+    enabledOut = true;
+    return false;
+  }
+
+  enabledOut = prefs.getBool(DISPLAY_KEY, true);
+  prefs.end();
   return true;
 }
 
 bool DashboardStore::saveDisplayEnabled(bool enabled) {
   begin();
-  EEPROM.write(WiFiSetupPortal::DISPLAY_PREF_ADDR, kDisplayPrefMagic);
-  EEPROM.write(WiFiSetupPortal::DISPLAY_PREF_ADDR + 1, enabled ? 1 : 0);
-  return EEPROM.commit();
+
+  Preferences prefs;
+  if (!prefs.begin(DASHBOARD_PREFS_NAMESPACE, false)) {
+    return false;
+  }
+  const bool ok = prefs.putBool(DISPLAY_KEY, enabled) > 0;
+  prefs.end();
+  return ok;
 }
 
 void DashboardStore::loadSettings(GpsDashboardSettings& settingsOut) {
   begin();
 
-  StoredGpsDashboardConfig stored = {};
-  EEPROM.get(WiFiSetupPortal::GNSS_CONFIG_ADDR, stored);
-
-  if (stored.magic != kGnssDashboardConfigMagic) {
-    settingsOut.rawLoggingEnabled = false;
-    settingsOut.ntpHoldoverEnabled = true;
-    settingsOut.enableStats = true;
-    settingsOut.enableLocation = false;
+  Preferences prefs;
+  if (!prefs.begin(DASHBOARD_PREFS_NAMESPACE, true)) {
+    applyDefaultSettings(settingsOut);
     return;
   }
 
-  settingsOut.rawLoggingEnabled = stored.rawLoggingEnabled != 0;
-  settingsOut.ntpHoldoverEnabled = stored.ntpHoldoverEnabled != 0;
-  settingsOut.enableStats = stored.enableStatsEnabled != 0;
-  settingsOut.enableLocation = stored.locationEnabled != 0;
+  if (!prefs.isKey(RAW_LOGGING_KEY) ||
+      !prefs.isKey(NTP_HOLDOVER_KEY) ||
+      !prefs.isKey(STATS_KEY) ||
+      !prefs.isKey(LOCATION_KEY)) {
+    prefs.end();
+    applyDefaultSettings(settingsOut);
+    return;
+  }
+
+  settingsOut.rawLoggingEnabled = prefs.getBool(RAW_LOGGING_KEY, false);
+  settingsOut.ntpHoldoverEnabled = prefs.getBool(NTP_HOLDOVER_KEY, true);
+  settingsOut.enableStats = prefs.getBool(STATS_KEY, true);
+  settingsOut.enableLocation = prefs.getBool(LOCATION_KEY, false);
+  prefs.end();
 }
 
 bool DashboardStore::saveSettings(const GpsDashboardSettings& settings) {
-  StoredGpsDashboardConfig stored = {};
-  stored.magic = kGnssDashboardConfigMagic;
-  stored.rawLoggingEnabled = settings.rawLoggingEnabled ? 1 : 0;
-  stored.ntpHoldoverEnabled = settings.ntpHoldoverEnabled ? 1 : 0;
-  stored.enableStatsEnabled = settings.enableStats ? 1 : 0;
-  stored.locationEnabled = settings.enableLocation ? 1 : 0;
-
   begin();
-  EEPROM.put(WiFiSetupPortal::GNSS_CONFIG_ADDR, stored);
-  return EEPROM.commit();
+
+  Preferences prefs;
+  if (!prefs.begin(DASHBOARD_PREFS_NAMESPACE, false)) {
+    return false;
+  }
+
+  bool ok = true;
+  ok = prefs.putBool(RAW_LOGGING_KEY, settings.rawLoggingEnabled) > 0 && ok;
+  ok = prefs.putBool(NTP_HOLDOVER_KEY, settings.ntpHoldoverEnabled) > 0 && ok;
+  ok = prefs.putBool(STATS_KEY, settings.enableStats) > 0 && ok;
+  ok = prefs.putBool(LOCATION_KEY, settings.enableLocation) > 0 && ok;
+  prefs.end();
+  return ok;
+}
+
+void DashboardStore::applyDefaultSettings(GpsDashboardSettings& settingsOut) {
+  settingsOut.rawLoggingEnabled = false;
+  settingsOut.ntpHoldoverEnabled = true;
+  settingsOut.enableStats = true;
+  settingsOut.enableLocation = false;
 }

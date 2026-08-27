@@ -31,10 +31,6 @@ constexpr uint8_t BOOT_BUTTON_PIN = 0;
 constexpr uint32_t PPS_MCPWM_TICKS_PER_SECOND = 79998000UL;  // used calibrated MCPWM - don't delete this line
 constexpr uint32_t GNSS_BAUD_RATE = 115200UL;
 
-const char* NTP_SERVER_1 = "time.cloudflare.com";
-const char* NTP_SERVER_2 = "time.google.com";
-const char* NTP_SERVER_3 = "time.aws.com";
-
 WiFiSetupPortal wifiPortal;
 GnssMaxM10S gps(GNSS_RX_PIN, GNSS_TX_PIN, GNSS_BAUD_RATE);
 NmeaServer nmeaServer;
@@ -49,7 +45,6 @@ OledClockDisplay oledDisplay(displayDriver);
 unsigned long lastDisplayUpdateMs = 0;
 unsigned long lastGpsStatusLogMs = 0;
 bool wasGpsValid = false;
-bool ntpSynced = false;
 char apSsid[24] = "ESP-Setup";
 GpsDashboardSettings gpsDashboardSettings;
 bool holdoverClockValid = false;
@@ -259,15 +254,6 @@ const char* resetReasonToString(esp_reset_reason_t reason) {
   }
 }
 
-bool getNtpUtcEpoch(uint32_t& epochUtcOut) {
-  time_t nowUtc = time(nullptr);
-  if (nowUtc < 1700000000) {
-    return false;
-  }
-  epochUtcOut = static_cast<uint32_t>(nowUtc);
-  return true;
-}
-
 float readEspTemperatureC() {
   const float reading = temperatureRead();
   if (reading < -40.0f || reading > 120.0f) {
@@ -293,10 +279,6 @@ void updateCpuUtilization(uint64_t loopBusyUs) {
     cpuUtilBusyUs = 0;
     cpuUtilWindowStartUs = micros();
   }
-}
-
-void syncNtp() {
-  configTime(0, 0, NTP_SERVER_1, NTP_SERVER_2, NTP_SERVER_3);
 }
 
 String formatUtcTimeForNmea(uint32_t epochUtc) {
@@ -366,7 +348,6 @@ void processPpsCapture() {
 void updateDisplay(uint32_t nowMs) {
   char gpsTimeLine[16] = "No GNSS";
   char gpsDateLine[16] = "fix";
-  char ntpTimeLine[16] = "Syncing";
   char statusLine[64] = "";
 
   uint32_t satCount = 0;
@@ -441,13 +422,6 @@ void updateDisplay(uint32_t nowMs) {
     wasGpsValid = false;
   }
 
-  uint32_t ntpEpochUtc = 0;
-  if (getNtpUtcEpoch(ntpEpochUtc) &&
-      (!OledClockDisplay::formatIstTimeOnlyFromEpoch(ntpEpochUtc, ntpTimeLine, sizeof(ntpTimeLine)) ||
-       !OledClockDisplay::isPrintableText(ntpTimeLine))) {
-    snprintf(ntpTimeLine, sizeof(ntpTimeLine), "Syncing");
-  }
-
   if (wifiPortal.isActive()) {
     snprintf(statusLine, sizeof(statusLine), "WiFiSetup: %s", apSsid);
   } else if (wifiPortal.isConnected()) {
@@ -465,9 +439,7 @@ void updateDisplay(uint32_t nowMs) {
   OledClockPage page;
   page.gpsTimeLine = gpsTimeLine;
   page.gpsDateLine = gpsDateLine;
-  page.ntpTimeLine = ntpTimeLine;
   page.statusLine = statusLine;
-  page.satelliteCount = satCount;
   oledDisplay.drawClockPage(page);
 }
 
@@ -507,10 +479,6 @@ void setup() {
   wifiPortal.setGpsDashboardCallbacks(fillGpsDashboardData, saveGpsDashboardSettings);
   wifiPortal.setResetPin(BOOT_BUTTON_PIN, WIFI_RESET_HOLD_MS, LOW);
   wifiPortal.begin();
-  if (wifiPortal.isConnected()) {
-    syncNtp();
-    ntpSynced = true;
-  }
 
   gps.begin();
   applyGpsDashboardSettings();
@@ -553,13 +521,8 @@ void loop() {
     }
   }
 
-  if (wifiPortal.consumeCredentialsChanged() || (!ntpSynced && wifiPortal.isConnected())) {
-    syncNtp();
-    ntpSynced = true;
-    Serial.printf("NTP synced. IP: %s\n", wifiPortal.localIP().toString().c_str());
-  }
-  if (!wifiPortal.isConnected()) {
-    ntpSynced = false;
+  if (wifiPortal.consumeCredentialsChanged()) {
+    Serial.printf("WiFi connected. IP: %s\n", wifiPortal.localIP().toString().c_str());
   }
 
   processPpsCapture();

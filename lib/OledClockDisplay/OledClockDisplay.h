@@ -6,9 +6,7 @@
 struct OledClockPage {
   const char* gpsTimeLine = "No GNSS";
   const char* gpsDateLine = "fix";
-  const char* ntpTimeLine = "Syncing";
   const char* statusLine = "";
-  uint32_t satelliteCount = 0;
 };
 
 class OledClockDisplay {

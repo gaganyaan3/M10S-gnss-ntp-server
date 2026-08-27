@@ -125,7 +125,7 @@ struct GpsDashboardStatus {
 // On first boot (no saved credentials) the device starts an open hotspot named
 // via setApCredentials().  The user connects, opens any page, and is redirected
 // to a simple form to enter their Wi-Fi SSID / password.  On success the
-// credentials are persisted to EEPROM and the hotspot shuts down.
+// credentials are persisted to NVS Preferences and the hotspot shuts down.
 //
 // If saved credentials exist the device tries to connect on begin().  Hold the
 // optional reset pin (setResetPin) to wipe stored credentials and re-enter
@@ -134,10 +134,6 @@ class WiFiSetupPortal {
  public:
   using GpsConfigProvider = std::function<void(GpsDashboardSettings&, GpsDashboardStatus&)>;
   using GpsConfigSaver = std::function<bool(const GpsDashboardSettings&)>;
-
-  static constexpr size_t EEPROM_BYTES = 256;
-  static constexpr size_t DISPLAY_PREF_ADDR = 126;
-  static constexpr size_t GNSS_CONFIG_ADDR = 128;
 
   WiFiSetupPortal();
 

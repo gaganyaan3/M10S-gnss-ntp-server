@@ -1,20 +1,14 @@
 #include "WiFiSetupPortal.h"
 
-#include <EEPROM.h>
+#include <Preferences.h>
 #include <time.h>
 
 namespace {
 
-const uint32_t CREDENTIALS_MAGIC = 0x57535031;
-const size_t SSID_SIZE = 33;
-const size_t PASSWORD_SIZE = 65;
+constexpr const char* WIFI_PREFS_NAMESPACE = "wifi_setup";
+constexpr const char* WIFI_SSID_KEY = "ssid";
+constexpr const char* WIFI_PASSWORD_KEY = "pass";
 constexpr uint32_t WIFI_RETRY_INTERVAL_MS = 15000UL;
-
-struct StoredCredentials {
-  uint32_t magic;
-  char ssid[SSID_SIZE];
-  char password[PASSWORD_SIZE];
-};
 
 String htmlEscape(const String& input) {
   String out;
@@ -313,42 +307,41 @@ void WiFiSetupPortal::stopDnsServer() {
 }
 
 bool WiFiSetupPortal::loadSavedCredentials(String& ssid, String& password) {
-  EEPROM.begin(EEPROM_BYTES);
-
-  StoredCredentials creds = {};
-  EEPROM.get(0, creds);
-  // Guarantee null-termination regardless of EEPROM content.
-  creds.ssid[SSID_SIZE - 1] = '\0';
-  creds.password[PASSWORD_SIZE - 1] = '\0';
-
-  if (creds.magic != CREDENTIALS_MAGIC || creds.ssid[0] == '\0') {
-    return false;
+  Preferences prefs;
+  if (prefs.begin(WIFI_PREFS_NAMESPACE, true)) {
+    if (prefs.isKey(WIFI_SSID_KEY)) {
+      ssid = prefs.getString(WIFI_SSID_KEY, "");
+      password = prefs.getString(WIFI_PASSWORD_KEY, "");
+      prefs.end();
+      if (!ssid.isEmpty()) {
+        return true;
+      }
+    } else {
+      prefs.end();
+    }
   }
-
-  ssid = creds.ssid;
-  password = creds.password;
-  return true;
+  return false;
 }
 
 void WiFiSetupPortal::saveCredentials(const String& ssid, const String& password) {
-  StoredCredentials creds = {};
-  creds.magic = CREDENTIALS_MAGIC;
-  strncpy(creds.ssid, ssid.c_str(), SSID_SIZE - 1);
-  strncpy(creds.password, password.c_str(), PASSWORD_SIZE - 1);
-
-  EEPROM.begin(EEPROM_BYTES);
-  EEPROM.put(0, creds);
-  EEPROM.commit();
+  Preferences prefs;
+  if (prefs.begin(WIFI_PREFS_NAMESPACE, false)) {
+    prefs.putString(WIFI_SSID_KEY, ssid);
+    prefs.putString(WIFI_PASSWORD_KEY, password);
+    prefs.end();
+  }
   credentialsChanged_ = true;
 }
 
 void WiFiSetupPortal::clearSavedCredentials() {
-  StoredCredentials creds = {};
-  // Writing magic = 0 invalidates the stored block.
-  EEPROM.begin(EEPROM_BYTES);
-  EEPROM.put(0, creds);
-  EEPROM.commit();
-  Serial.println("Saved Wi-Fi credentials cleared from EEPROM");
+  Preferences prefs;
+  if (prefs.begin(WIFI_PREFS_NAMESPACE, false)) {
+    prefs.remove(WIFI_SSID_KEY);
+    prefs.remove(WIFI_PASSWORD_KEY);
+    prefs.end();
+  }
+
+  Serial.println("Saved Wi-Fi credentials cleared from NVS Preferences");
 }
 
 void WiFiSetupPortal::checkResetPin() {
@@ -974,7 +967,7 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
   }
   page += F("><span><strong>Display enabled</strong><span>Turn the OLED display on or off.</span></span></label>"
             "<button type=\"submit\">Save</button>"
-            "<div class=\"banner\" id=\"save-banner\" style=\"display:none\">GPS settings saved to EEPROM.</div>"
+            "<div class=\"banner\" id=\"save-banner\" style=\"display:none\">GPS settings saved to NVS.</div>"
             "<script>(function(){"
             "var b=document.getElementById('save-banner');"
             "if(window.location.hash==='\\#saved'&&b){"

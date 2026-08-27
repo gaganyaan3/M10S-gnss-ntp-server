@@ -58,23 +58,6 @@ void OledClockDisplay::drawClockPage(const OledClockPage& page) {
   display_.drawStr(0, 14, page.statusLine);
 
   display_.setFont(u8g2_font_6x13_tf);
-  display_.drawStr(0, 33, "NTP:");
-  display_.drawStr(28, 33, page.ntpTimeLine);
-
-  char satText[16];
-  snprintf(satText, sizeof(satText), "sats: %lu", static_cast<unsigned long>(page.satelliteCount));
-  const int ntpWidth = display_.getStrWidth(page.ntpTimeLine);
-  const int satWidth = display_.getStrWidth(satText);
-  int satX = 28 + ntpWidth + 4;
-  if (satX + satWidth > 128) {
-    satX = 128 - satWidth;
-    if (satX < 0) {
-      satX = 0;
-    }
-  }
-  display_.drawStr(satX, 33, satText);
-
-  display_.setFont(u8g2_font_6x13_tf);
   display_.drawStr(0, 56, "GNSS:");
   display_.setFont(u8g2_font_7x13_tf);
   display_.drawStr(28, 56, page.gpsTimeLine);

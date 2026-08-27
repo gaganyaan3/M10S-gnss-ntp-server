@@ -1,11 +1,7 @@
 # ESP32 + SmartElex u-blox MAX-M10S GNSS + NTP Clock (SH1106 OLED)
 
-This project runs on an ESP32 and shows both GNSS time (from a SmartElex
-u-blox MAX-M10S module) and internet NTP time on a SH1106 128x64 OLED.
-
-Displayed time is IST and refreshes every second in this format:
-
-`dd/mm/yy hh:mm:ss IST`
+This project runs on an ESP32 and shows GNSS time from a SmartElex
+u-blox MAX-M10S module on a SH1106 128x64 OLED and serve as NTP server.
 
 ## ESP32 Wiring
 
@@ -61,7 +57,7 @@ Quick check:
 ntpdate -q <device-ip>
 ```
 
-If no valid GNSS time is available, the NTP server stays silent rather than
+If no valid PPS or GNSS time is available, the NTP server stays silent rather than
 replying with invalid timestamps.
 
 After the first valid TIM-TP/PPS lock, optional holdover keeps NTP responses
@@ -152,9 +148,9 @@ http://<device-ip>/gnss
 
 Dashboard features:
 - Runtime GNSS status (satellites, GNSS epoch, service ports)
-- Raw NMEA logging toggle (saved in EEPROM)
-- NTP holdover toggle (saved in EEPROM)
-- Display enable toggle (saved in EEPROM)
+- Raw NMEA logging toggle (saved in NVS Preferences)
+- NTP holdover toggle (saved in NVS Preferences)
+- Display enable toggle (saved in NVS Preferences)
 
 Live NAV-PVT-style stats page:
 
@@ -261,7 +257,7 @@ Running from previously measured timer frequency.
 - [lib/PpsCapture/PpsCapture.cpp](lib/PpsCapture/PpsCapture.cpp): PPS capture ISR, software-forced "now" capture, 64-bit tick extension, period stats
 - [lib/GnssClock/GnssClock.h](lib/GnssClock/GnssClock.h): GNSS-backed NTP clock interface, holdover diagnostics, clock-state helper
 - [lib/GnssClock/GnssClock.cpp](lib/GnssClock/GnssClock.cpp): PPS-disciplined NTP time selection, holdover, coarse correction averaging
-- [lib/DashboardStore/DashboardStore.h](lib/DashboardStore/DashboardStore.h): EEPROM-backed dashboard/display settings API
+- [lib/DashboardStore/DashboardStore.h](lib/DashboardStore/DashboardStore.h): NVS-backed dashboard/display settings API
 - [lib/DashboardStore/DashboardStore.cpp](lib/DashboardStore/DashboardStore.cpp): display preference and GNSS dashboard config persistence
 - [lib/OledClockDisplay/OledClockDisplay.h](lib/OledClockDisplay/OledClockDisplay.h): OLED display model and IST formatting helpers
 - [lib/OledClockDisplay/OledClockDisplay.cpp](lib/OledClockDisplay/OledClockDisplay.cpp): SH1106 boot screen, reset overlay, clock page rendering
