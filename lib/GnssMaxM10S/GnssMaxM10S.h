@@ -62,16 +62,9 @@ struct GnssNavSatSnapshot {
 
 struct GnssMonRfData {
   bool valid = false;
-  uint8_t jammingState = 0;
   uint8_t jamInd = 0;
   uint16_t noisePerMS = 0;
   uint16_t agcCnt = 0;
-  uint8_t antStatus = 0;
-  uint8_t antPower = 0;
-  int8_t ofsI = 0;
-  int8_t ofsQ = 0;
-  uint8_t magI = 0;
-  uint8_t magQ = 0;
   uint16_t agcCntAvg = 0;
   uint8_t blockId = 0;
   bool cfgValsetAck = false;
@@ -84,18 +77,12 @@ struct GnssMonRfData {
 struct GnssTimTpData {
   bool valid = false;
   uint32_t towMs = 0;
-  uint32_t towSubMs = 0;
   int32_t qErrPs = 0;
-  uint16_t week = 0;
   uint8_t flags = 0;
   uint8_t refInfo = 0;
-  bool utcTimeBase = false;
-  bool utcAvailable = false;
   bool qErrInvalid = false;
   bool tpNotLocked = false;
   bool utcEpochValid = false;
-  uint64_t epochUtcNs = 0;
-  int32_t appliedQErrNs = 0;
   uint32_t receivedMs = 0;
   uint32_t receivedUs = 0;
 };
@@ -264,6 +251,7 @@ class GnssMaxM10S {
   GnssMonRfData monRfData_ = {};
   GnssTimTpData timTpData_ = {};
   bool timTpPendingForPps_ = false;
+  uint64_t timTpPpsEpochUtcNs_ = 0;
   uint16_t monRfAgcCntSamples_[5] = {};
   uint8_t monRfAgcCntSamplePos_ = 0;
   uint8_t monRfAgcCntSampleCount_ = 0;

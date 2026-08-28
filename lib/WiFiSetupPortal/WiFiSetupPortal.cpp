@@ -67,51 +67,6 @@ String holdoverCountdownLabel(uint32_t remainingSeconds) {
   return String(buffer);
 }
 
-String antStatusLabel(uint8_t antStatus) {
-  switch (antStatus) {
-    case 0:
-      return F("INIT (0)");
-    case 1:
-      return F("DONTKNOW (1)");
-    case 2:
-      return F("OK (2)");
-    case 3:
-      return F("SHORT (3)");
-    case 4:
-      return F("OPEN (4)");
-    default:
-      return String(F("Unknown (")) + String(antStatus) + F(")");
-  }
-}
-
-String antPowerLabel(uint8_t antPower) {
-  switch (antPower) {
-    case 0:
-      return F("OFF (0)");
-    case 1:
-      return F("ON (1)");
-    case 2:
-      return F("DONTKNOW (2)");
-    default:
-      return String(F("Unknown (")) + String(antPower) + F(")");
-  }
-}
-
-String jammingStateLabel(uint8_t jammingState) {
-  switch (jammingState) {
-    case 0:
-      return F("Unknown / disabled (0)");
-    case 1:
-      return F("OK (1)");
-    case 2:
-      return F("Warning (2)");
-    case 3:
-      return F("Critical (3)");
-    default:
-      return String(F("Unknown (")) + String(jammingState) + F(")");
-  }
-}
-
 String hexByteLabel(uint8_t value) {
   char buffer[6];
   snprintf(buffer, sizeof(buffer), "0x%02X", value);
@@ -1130,65 +1085,32 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
   page += F("<div class=\"card\"><h2>UBX-MON-RF</h2><div class=\"grid\">"
             "<div class=\"item\"><span class=\"label\">ANTStatus-agcCnt</span><span class=\"value\">");
   page += htmlEscape(status.monRfValid ? monRfAgcStatusLabel(status) : String(F("--")));
-  page += F("</span></div><div class=\"item\"><span class=\"label\">magI</span><span class=\"value\">");
-  page += htmlEscape(status.monRfValid ? String(status.magI) : String(F("--")));
-  page += F("</span></div><div class=\"item\"><span class=\"label\">magQ</span><span class=\"value\">");
-  page += htmlEscape(status.monRfValid ? String(status.magQ) : String(F("--")));
-  page += F("</span></div><div class=\"item\"><span class=\"label\">jammingState</span><span class=\"value\">");
-  page += htmlEscape(status.monRfValid ? jammingStateLabel(status.jammingState) : String(F("--")));
   page += F("</span></div><div class=\"item\"><span class=\"label\">jamInd</span><span class=\"value\">");
   page += htmlEscape(status.monRfValid ? String(status.jamInd) : String(F("--")));
   page += F("</span></div><div class=\"item\"><span class=\"label\">noisePerMS</span><span class=\"value\">");
   page += htmlEscape(status.monRfValid ? String(status.noisePerMS) : String(F("--")));
   page += F("</span></div><div class=\"item\"><span class=\"label\">agcCnt</span><span class=\"value\">");
   page += htmlEscape(status.monRfValid ? String(status.agcCnt) : String(F("--")));
-  page += F("</span></div><div class=\"item\"><span class=\"label\">antStatus</span><span class=\"value\">");
-  page += htmlEscape(status.monRfValid ? antStatusLabel(status.antStatus) : String(F("--")));
-  page += F("</span></div><div class=\"item\"><span class=\"label\">antPower</span><span class=\"value\">");
-  page += htmlEscape(status.monRfValid ? antPowerLabel(status.antPower) : String(F("--")));
-  page += F("</span></div><div class=\"item\"><span class=\"label\">ofsI</span><span class=\"value\">");
-  page += htmlEscape(status.monRfValid ? String(status.ofsI) : String(F("--")));
-  page += F("</span></div><div class=\"item\"><span class=\"label\">ofsQ</span><span class=\"value\">");
-  page += htmlEscape(status.monRfValid ? String(status.ofsQ) : String(F("--")));
   page += F("</span></div></div></div>");
 
   page += F("<div class=\"card\"><h2>UBX-TIM-TP</h2><div class=\"grid\">"
             "<div class=\"item\"><span class=\"label\">towMS</span><span class=\"value\">");
   page += htmlEscape(status.timTpValid ? String(status.timTpTowMs) : String(F("--")));
-  page += F(" ms</span></div><div class=\"item\"><span class=\"label\">towSubMS</span><span class=\"value\">");
-  page += htmlEscape(status.timTpValid ? String(status.timTpTowSubMs) : String(F("--")));
-  page += F("</span></div><div class=\"item\"><span class=\"label\">qErr</span><span class=\"value\">");
+  page += F(" ms</span></div><div class=\"item\"><span class=\"label\">qErr</span><span class=\"value\">");
   if (status.timTpValid && !status.timTpQErrInvalid) {
     page += htmlEscape(String(status.timTpQErrPs));
     page += F(" ps");
   } else {
     page += F("--");
   }
-  page += F("</span></div><div class=\"item\"><span class=\"label\">week</span><span class=\"value\">");
-  page += htmlEscape(status.timTpValid ? String(status.timTpWeek) : String(F("--")));
   page += F("</span></div><div class=\"item\"><span class=\"label\">flags</span><span class=\"value\">");
   page += htmlEscape(status.timTpValid ? hexByteLabel(status.timTpFlags) : String(F("--")));
   page += F("</span></div><div class=\"item\"><span class=\"label\">refInfo</span><span class=\"value\">");
   page += htmlEscape(status.timTpValid ? hexByteLabel(status.timTpRefInfo) : String(F("--")));
-  page += F("</span></div><div class=\"item\"><span class=\"label\">UTC base</span><span class=\"value\">");
-  page += htmlEscape(status.timTpValid ? yesNoLabel(status.timTpUtcTimeBase) : String(F("--")));
-  page += F("</span></div><div class=\"item\"><span class=\"label\">UTC available</span><span class=\"value\">");
-  page += htmlEscape(status.timTpValid ? yesNoLabel(status.timTpUtcAvailable) : String(F("--")));
   page += F("</span></div><div class=\"item\"><span class=\"label\">qErr invalid</span><span class=\"value\">");
   page += htmlEscape(status.timTpValid ? yesNoLabel(status.timTpQErrInvalid) : String(F("--")));
   page += F("</span></div><div class=\"item\"><span class=\"label\">TP not locked</span><span class=\"value\">");
   page += htmlEscape(status.timTpValid ? yesNoLabel(status.timTpTpNotLocked) : String(F("--")));
-  page += F("</span></div><div class=\"item\"><span class=\"label\">UTC epoch ns</span><span class=\"value\">");
-  page += htmlEscape((status.timTpValid && status.timTpUtcEpochValid) ?
-                     String(static_cast<unsigned long long>(status.timTpEpochUtcNs)) :
-                     String(F("--")));
-  page += F("</span></div><div class=\"item\"><span class=\"label\">applied qErr</span><span class=\"value\">");
-  if (status.timTpValid && !status.timTpQErrInvalid) {
-    page += htmlEscape(String(status.timTpAppliedQErrNs));
-    page += F(" ns");
-  } else {
-    page += F("--");
-  }
   page += F("</span></div></div></div>");
 
   page += F("<div class=\"card\"><h2>UBX-NAV-SAT</h2><div class=\"grid\">");

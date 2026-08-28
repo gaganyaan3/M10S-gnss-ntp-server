@@ -27,11 +27,11 @@ constexpr uint8_t I2C_SDA_PIN = 32;
 constexpr uint8_t I2C_SCL_PIN = 33;
 constexpr uint8_t GNSS_RX_PIN = 22;
 constexpr uint8_t GNSS_TX_PIN = 21;
-constexpr uint8_t PPS_PIN = 27;
+constexpr uint8_t PPS_PIN = 26;
 constexpr uint8_t BOOT_BUTTON_PIN = 0;
 
 // constexpr uint32_t PPS_MCPWM_TICKS_PER_SECOND = 80000000UL;  // don't delete this line
-constexpr uint32_t PPS_MCPWM_TICKS_PER_SECOND = 79998000UL;  // used calibrated MCPWM - don't delete this line
+constexpr uint32_t PPS_MCPWM_TICKS_PER_SECOND = 79998038UL;  // used calibrated MCPWM - don't delete this line
 constexpr uint32_t GNSS_BAUD_RATE = 115200UL;
 
 WiFiSetupPortal wifiPortal;
@@ -117,16 +117,9 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
     gps.monRfSnapshot(monRf);
     statusOut.monRfValid = monRf.valid;
     statusOut.monRfAgeMs = monRf.receivedMs == 0 ? 0 : millis() - monRf.receivedMs;
-    statusOut.jammingState = monRf.jammingState;
     statusOut.jamInd = monRf.jamInd;
     statusOut.noisePerMS = monRf.noisePerMS;
     statusOut.agcCnt = monRf.agcCnt;
-    statusOut.antStatus = monRf.antStatus;
-    statusOut.antPower = monRf.antPower;
-    statusOut.ofsI = monRf.ofsI;
-    statusOut.ofsQ = monRf.ofsQ;
-    statusOut.magI = monRf.magI;
-    statusOut.magQ = monRf.magQ;
     statusOut.agcCntAvg = monRf.agcCntAvg;
     statusOut.monRfCfgValsetAck = monRf.cfgValsetAck;
     statusOut.monRfCfgValsetNak = monRf.cfgValsetNak;
@@ -139,18 +132,12 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
     gps.timTpSnapshot(timTp);
     statusOut.timTpValid = timTp.valid;
     statusOut.timTpTowMs = timTp.towMs;
-    statusOut.timTpTowSubMs = timTp.towSubMs;
     statusOut.timTpQErrPs = timTp.qErrPs;
-    statusOut.timTpWeek = timTp.week;
     statusOut.timTpFlags = timTp.flags;
     statusOut.timTpRefInfo = timTp.refInfo;
-    statusOut.timTpUtcTimeBase = timTp.utcTimeBase;
-    statusOut.timTpUtcAvailable = timTp.utcAvailable;
     statusOut.timTpQErrInvalid = timTp.qErrInvalid;
     statusOut.timTpTpNotLocked = timTp.tpNotLocked;
     statusOut.timTpUtcEpochValid = timTp.utcEpochValid;
-    statusOut.timTpEpochUtcNs = timTp.epochUtcNs;
-    statusOut.timTpAppliedQErrNs = timTp.appliedQErrNs;
   }
 
   statusOut.clockState = gnssClock.clockState(statusOut);

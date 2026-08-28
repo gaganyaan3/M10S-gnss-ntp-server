@@ -485,7 +485,7 @@ bool GnssMaxM10S::timTpCanAnchorPps(uint64_t& epochNsUtcOut) const {
     return false;
   }
 
-  epochNsUtcOut = timTpData_.epochUtcNs;
+  epochNsUtcOut = timTpPpsEpochUtcNs_;
   return true;
 }
 
@@ -860,18 +860,11 @@ void GnssMaxM10S::handleUbxFrame(uint8_t messageClass,
     const uint8_t nBlocks = payload[1];
     if (nBlocks > 0 && payloadLength >= 28) {
       monRfData_.blockId = payload[4];
-      monRfData_.jammingState = payload[5] & 0x03;
-      monRfData_.antStatus = payload[6];
-      monRfData_.antPower = payload[7];
       monRfData_.noisePerMS = static_cast<uint16_t>(payload[16]) |
                               (static_cast<uint16_t>(payload[17]) << 8);
       monRfData_.agcCnt = static_cast<uint16_t>(payload[18]) |
                           (static_cast<uint16_t>(payload[19]) << 8);
       monRfData_.jamInd = payload[20];
-      monRfData_.ofsI = static_cast<int8_t>(payload[21]);
-      monRfData_.magI = payload[22];
-      monRfData_.ofsQ = static_cast<int8_t>(payload[23]);
-      monRfData_.magQ = payload[24];
       monRfAgcCntSamples_[monRfAgcCntSamplePos_] = monRfData_.agcCnt;
       monRfAgcCntSamplePos_ =
           (monRfAgcCntSamplePos_ + 1) % (sizeof(monRfAgcCntSamples_) / sizeof(monRfAgcCntSamples_[0]));
@@ -897,7 +890,7 @@ void GnssMaxM10S::handleUbxFrame(uint8_t messageClass,
         (static_cast<uint32_t>(payload[1]) << 8) |
         (static_cast<uint32_t>(payload[2]) << 16) |
         (static_cast<uint32_t>(payload[3]) << 24);
-    timTpData_.towSubMs =
+    const uint32_t towSubMs =
         static_cast<uint32_t>(payload[4]) |
         (static_cast<uint32_t>(payload[5]) << 8) |
         (static_cast<uint32_t>(payload[6]) << 16) |
@@ -907,36 +900,34 @@ void GnssMaxM10S::handleUbxFrame(uint8_t messageClass,
         (static_cast<uint32_t>(payload[9]) << 8) |
         (static_cast<uint32_t>(payload[10]) << 16) |
         (static_cast<uint32_t>(payload[11]) << 24));
-    timTpData_.week =
+    const uint16_t week =
         static_cast<uint16_t>(payload[12]) |
         (static_cast<uint16_t>(payload[13]) << 8);
     timTpData_.flags = payload[14];
     timTpData_.refInfo = payload[15];
-    timTpData_.utcTimeBase = (timTpData_.flags & 0x01) != 0;
-    timTpData_.utcAvailable = (timTpData_.flags & 0x02) != 0;
+    const bool utcTimeBase = (timTpData_.flags & 0x01) != 0;
+    const bool utcAvailable = (timTpData_.flags & 0x02) != 0;
     timTpData_.qErrInvalid = (timTpData_.flags & 0x10) != 0;
     timTpData_.tpNotLocked = (timTpData_.flags & 0x20) != 0;
-    timTpData_.appliedQErrNs = 0;
     timTpData_.utcEpochValid = false;
-    timTpData_.epochUtcNs = 0;
-    if (timTpData_.utcTimeBase && timTpData_.utcAvailable && !timTpData_.tpNotLocked) {
+    timTpPpsEpochUtcNs_ = 0;
+    if (utcTimeBase && utcAvailable && !timTpData_.tpNotLocked) {
       const uint64_t towNs =
           static_cast<uint64_t>(timTpData_.towMs) * 1000000ULL +
-          ((static_cast<uint64_t>(timTpData_.towSubMs) * 1000000ULL + 0x80000000ULL) >> 32);
+          ((static_cast<uint64_t>(towSubMs) * 1000000ULL + 0x80000000ULL) >> 32);
       int64_t epochNs =
           static_cast<int64_t>(UNIX_GPS_EPOCH_OFFSET_SECONDS) * 1000000000LL +
-          static_cast<int64_t>(timTpData_.week) * static_cast<int64_t>(SECONDS_PER_WEEK) * 1000000000LL +
+          static_cast<int64_t>(week) * static_cast<int64_t>(SECONDS_PER_WEEK) * 1000000000LL +
           static_cast<int64_t>(towNs);
       if (!timTpData_.qErrInvalid) {
         const int32_t qErrNs =
             (timTpData_.qErrPs >= 0)
                 ? static_cast<int32_t>((timTpData_.qErrPs + 500) / 1000)
                 : static_cast<int32_t>((timTpData_.qErrPs - 500) / 1000);
-        timTpData_.appliedQErrNs = qErrNs;
         epochNs += qErrNs;
       }
       if (epochNs > 0) {
-        timTpData_.epochUtcNs = static_cast<uint64_t>(epochNs);
+        timTpPpsEpochUtcNs_ = static_cast<uint64_t>(epochNs);
         timTpData_.utcEpochValid = true;
       }
     }
