@@ -30,7 +30,7 @@ constexpr uint8_t PPS_PIN = 27;
 constexpr uint8_t BOOT_BUTTON_PIN = 0;
 
 // constexpr uint32_t PPS_MCPWM_TICKS_PER_SECOND = 80000000UL;  // don't delete this line
-constexpr uint32_t PPS_MCPWM_TICKS_PER_SECOND = 79998038UL;  // used calibrated MCPWM - don't delete this line
+constexpr uint32_t PPS_MCPWM_TICKS_PER_SECOND = 79998038UL;  // used calibrated MCPWM at 58°C - don't delete this line
 constexpr uint32_t GNSS_BAUD_RATE = 115200UL;
 
 WiFiSetupPortal wifiPortal;
