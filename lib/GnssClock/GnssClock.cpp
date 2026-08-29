@@ -24,13 +24,122 @@ bool GnssClock::navPvtCoarseEpochUs(uint64_t& epochUsUtcOut, uint32_t* receivedU
   return true;
 }
 
+bool GnssClock::navPvtConfirmedTimeEpochUs(uint64_t& epochUsUtcOut, uint32_t* receivedUsOut) {
+  GnssNavPvtData pvt;
+  gps_.navPvtSnapshot(pvt);
+  if (!pvt.valid ||
+      !pvt.validDate ||
+      !pvt.validTime ||
+      !pvt.fullyResolved ||
+      !pvt.confirmedTime) {
+    return false;
+  }
+
+  if (!gps_.navPvtUtcEpochUs(epochUsUtcOut)) {
+    return false;
+  }
+
+  if (receivedUsOut) {
+    *receivedUsOut = pvt.receivedUs;
+  }
+  return true;
+}
+
 bool GnssClock::currentNtpEpochUs(uint64_t& epochUsUtcOut) {
   uint64_t epochNsUtc = 0;
   if (gps_.currentUtcEpochNsPps(epochNsUtc) && gps_.ppsRecentlySeen()) {
     epochUsUtcOut = epochNsUtc / 1000ULL;
-    refreshHoldoverTimeout();
+    refreshHoldoverTimeout(kHoldoverTimeoutMs);
+    holdoverAcquiredTimeout_ = false;
+    holdoverPpsDisciplined_ = true;
+    holdoverNavPvtReceivedUsValid_ = false;
     anchorHoldoverUs(epochUsUtcOut);
-    updateCoarseCorrection(epochUsUtcOut, true, false, epochUsUtcOut);
+    return true;
+  }
+
+  uint64_t acquiredEpochUsUtc = 0;
+  uint32_t acquiredReceivedUs = 0;
+  const bool acquiredEpochValid = navPvtCoarseEpochUs(acquiredEpochUsUtc, &acquiredReceivedUs);
+  uint64_t confirmedTimeEpochUsUtc = 0;
+  uint32_t confirmedTimeReceivedUs = 0;
+  const bool confirmedTimeEpochValid =
+      navPvtConfirmedTimeEpochUs(confirmedTimeEpochUsUtc, &confirmedTimeReceivedUs);
+  const bool navPvtFallbackValid = acquiredEpochValid || confirmedTimeEpochValid;
+  const uint64_t navPvtFallbackEpochUsUtc =
+      acquiredEpochValid ? acquiredEpochUsUtc : confirmedTimeEpochUsUtc;
+  const uint32_t navPvtFallbackReceivedUs =
+      acquiredEpochValid ? acquiredReceivedUs : confirmedTimeReceivedUs;
+  const char* navPvtFallbackLabel = acquiredEpochValid ? "ACQUIRED" : "ConfirmedTime";
+  const uint32_t navPvtFallbackTimeoutMs =
+      acquiredEpochValid ? kAcquiredHoldoverTimeoutMs : kConfirmedTimeHoldoverTimeoutMs;
+
+  if (navPvtFallbackValid && holdoverEnabled_ && holdoverValid_) {
+    uint64_t holdoverEpochUsUtc = 0;
+    if (!currentHoldoverUs(holdoverEpochUsUtc)) {
+      return false;
+    }
+
+    if (holdoverPpsDisciplined_) {
+      uint32_t remainingSeconds = 0;
+      if (holdoverRemainingSeconds(remainingSeconds)) {
+        epochUsUtcOut = holdoverEpochUsUtc;
+        return true;
+      }
+      holdoverPpsDisciplined_ = false;
+    }
+
+    if (!holdoverPpsDisciplined_ && !holdoverAcquiredTimeout_) {
+      epochUsUtcOut = navPvtFallbackEpochUsUtc;
+      anchorHoldoverUs(epochUsUtcOut);
+      startNavPvtHoldoverTimeout(navPvtFallbackTimeoutMs);
+      holdoverNavPvtReceivedUs_ = navPvtFallbackReceivedUs;
+      holdoverNavPvtReceivedUsValid_ = true;
+      return true;
+    }
+
+    if (!holdoverAcquiredTimeout_) {
+      startNavPvtHoldoverTimeout(navPvtFallbackTimeoutMs);
+    }
+
+    uint32_t remainingSeconds = 0;
+    if (holdoverRemainingSeconds(remainingSeconds)) {
+      epochUsUtcOut = holdoverEpochUsUtc;
+      return true;
+    }
+
+    epochUsUtcOut = holdoverEpochUsUtc;
+    if (updateCoarseCorrection(holdoverEpochUsUtc,
+                               navPvtFallbackEpochUsUtc,
+                               navPvtFallbackLabel,
+                               epochUsUtcOut)) {
+      restartNavPvtHoldoverTimeout(navPvtFallbackTimeoutMs);
+      return true;
+    }
+
+    return true;
+  }
+
+  if (acquiredEpochValid) {
+    epochUsUtcOut = acquiredEpochUsUtc;
+    if (holdoverEnabled_) {
+      anchorHoldoverUs(epochUsUtcOut);
+      startNavPvtHoldoverTimeout(kAcquiredHoldoverTimeoutMs);
+      holdoverPpsDisciplined_ = false;
+      holdoverNavPvtReceivedUs_ = acquiredReceivedUs;
+      holdoverNavPvtReceivedUsValid_ = true;
+    }
+    return true;
+  }
+
+  if (confirmedTimeEpochValid) {
+    epochUsUtcOut = confirmedTimeEpochUsUtc;
+    if (holdoverEnabled_) {
+      anchorHoldoverUs(epochUsUtcOut);
+      startNavPvtHoldoverTimeout(kConfirmedTimeHoldoverTimeoutMs);
+      holdoverPpsDisciplined_ = false;
+      holdoverNavPvtReceivedUs_ = confirmedTimeReceivedUs;
+      holdoverNavPvtReceivedUsValid_ = true;
+    }
     return true;
   }
 
@@ -38,17 +147,11 @@ bool GnssClock::currentNtpEpochUs(uint64_t& epochUsUtcOut) {
     uint32_t remainingSeconds = 0;
     if (!holdoverRemainingSeconds(remainingSeconds)) {
       holdoverValid_ = false;
+      holdoverPpsDisciplined_ = false;
+      holdoverNavPvtReceivedUsValid_ = false;
       return false;
     }
-
-    if (!currentHoldoverUs(epochUsUtcOut)) {
-      return false;
-    }
-
-    if (coarseCorrectionDeltaCount_ > 0) {
-      resetCoarseCorrectionWindow();
-    }
-    return true;
+    return currentHoldoverUs(epochUsUtcOut);
   }
 
   return false;
@@ -74,7 +177,7 @@ bool GnssClock::currentHoldoverUs(uint64_t& epochUsUtcOut) {
 }
 
 bool GnssClock::holdoverRemainingSeconds(uint32_t& remainingSecondsOut) {
-  if (!holdoverPpsDisciplined_) {
+  if (!holdoverDeadlineValid_) {
     return false;
   }
 
@@ -94,8 +197,7 @@ GnssClockDiagnostics GnssClock::diagnostics() {
   out.holdoverValid = holdoverValid_;
   if (out.holdoverValid) {
     out.holdoverTimeoutValid = holdoverRemainingSeconds(out.holdoverRemainingSeconds);
-    out.holdoverUtcValid =
-        out.holdoverTimeoutValid && currentHoldoverUs(out.holdoverEpochUtcMicros);
+    out.holdoverUtcValid = currentHoldoverUs(out.holdoverEpochUtcMicros);
   }
   return out;
 }
@@ -105,15 +207,26 @@ GpsClockState GnssClock::clockState(const GpsDashboardStatus& status) const {
       status.timTpUtcEpochValid &&
       !status.timTpTpNotLocked &&
       status.ppsAligned) {
-    return GPS_CLOCK_STATE_LOCKED;
+    return GPS_CLOCK_STATE_PPS_LOCKED;
   }
 
-  if (status.holdoverUtcValid && !status.ppsAligned) {
+  if (holdoverPpsDisciplined_ &&
+      status.holdoverUtcValid &&
+      status.holdoverTimeoutValid &&
+      !status.ppsAligned) {
     return GPS_CLOCK_STATE_HOLDOVER;
   }
 
   if (status.gpsTimeValid) {
-    return GPS_CLOCK_STATE_ACQUIRING;
+    return GPS_CLOCK_STATE_ACQUIRED;
+  }
+
+  if (status.navPvtConfirmedTimeReady) {
+    return GPS_CLOCK_STATE_CONFIRMED_TIME;
+  }
+
+  if (status.holdoverUtcValid && !status.ppsAligned) {
+    return GPS_CLOCK_STATE_HOLDOVER;
   }
 
   return GPS_CLOCK_STATE_UNSYNCED;
@@ -140,111 +253,76 @@ void GnssClock::anchorHoldoverUs(uint64_t epochUsUtc) {
   anchorHoldoverRawUs(static_cast<uint64_t>(correctedEpochUs));
 }
 
-void GnssClock::refreshHoldoverTimeout() {
-  holdoverPpsDisciplined_ = true;
-  holdoverDeadlineMs_ = millis() + kHoldoverTimeoutMs;
+void GnssClock::refreshHoldoverTimeout(uint32_t timeoutMs) {
+  holdoverDeadlineValid_ = true;
+  holdoverDeadlineMs_ = millis() + timeoutMs;
 }
 
-void GnssClock::resetCoarseCorrectionWindow() {
-  coarseCorrectionDeltaSumUs_ = 0;
-  coarseCorrectionDeltaCount_ = 0;
-  coarseCorrectionWindowStartMs_ = 0;
+void GnssClock::startNavPvtHoldoverTimeout(uint32_t timeoutMs) {
+  if (!holdoverAcquiredTimeout_) {
+    refreshHoldoverTimeout(timeoutMs);
+    holdoverAcquiredTimeout_ = true;
+  }
+}
+
+void GnssClock::restartNavPvtHoldoverTimeout(uint32_t timeoutMs) {
+  refreshHoldoverTimeout(timeoutMs);
+  holdoverAcquiredTimeout_ = true;
 }
 
 bool GnssClock::updateCoarseCorrection(uint64_t referenceEpochUsUtc,
-                                       bool applyToHoldover,
-                                       bool updateServedEpoch,
+                                       uint64_t navPvtEpochUsUtc,
+                                       const char* sourceLabel,
                                        uint64_t& epochUsUtcInOut) {
-  if (gps_.ppsRecentlySeen()) {
-    if (coarseCorrectionDeltaCount_ > 0) {
-      resetCoarseCorrectionWindow();
-    }
-    return false;
+  const int64_t deltaMs = static_cast<int64_t>(navPvtEpochUsUtc / 1000ULL) -
+                          static_cast<int64_t>(referenceEpochUsUtc / 1000ULL);
+  const int64_t absDeltaMs = abs64(deltaMs);
+  if (absDeltaMs >= kMaxAcquiredCoarseIgnoreDeltaMs) {
+    Serial.printf("%s coarse correction ignored | deltaMs=%lld thresholdMs=%lld ignoreAtMs=%lld\n",
+                  sourceLabel,
+                  static_cast<long long>(deltaMs),
+                  static_cast<long long>(kMaxAcquiredCoarseDeltaMs),
+                  static_cast<long long>(kMaxAcquiredCoarseIgnoreDeltaMs));
+    return true;
   }
 
-  uint64_t coarseEpochUsUtc = 0;
-  uint32_t coarseReceivedUs = 0;
-  if (!navPvtCoarseEpochUs(coarseEpochUsUtc, &coarseReceivedUs) ||
-      (coarseCorrectionLastSampleValid_ &&
-       coarseReceivedUs == coarseCorrectionLastSampleReceivedUs_)) {
-    return false;
+  if (absDeltaMs <= kMaxAcquiredCoarseDeltaMs) {
+    Serial.printf("%s coarse correction skipped | deltaMs=%lld thresholdMs=%lld\n",
+                  sourceLabel,
+                  static_cast<long long>(deltaMs),
+                  static_cast<long long>(kMaxAcquiredCoarseDeltaMs));
+    return true;
   }
 
-  coarseCorrectionLastSampleReceivedUs_ = coarseReceivedUs;
-  coarseCorrectionLastSampleValid_ = true;
-
-  const int64_t deltaUs = static_cast<int64_t>(coarseEpochUsUtc) -
-                          static_cast<int64_t>(referenceEpochUsUtc);
-  coarseCorrectionLastDeltaUs_ = deltaUs;
-  const uint32_t nowMs = millis();
-
-  if (coarseCorrectionDeltaCount_ == 0) {
-    if (!deltaExceedsThreshold(deltaUs, kMaxPpsCoarseDeltaUs)) {
-      return false;
-    }
-    coarseCorrectionWindowStartMs_ = nowMs;
-    Serial.printf("COARSE averaging window start | startDeltaUs=%lld startDeltaMs=%ld startDeltaSubUs=%ld thresholdUs=%lld referenceEpochUs=%llu navPvtEpochUs=%llu receivedUs=%lu\n",
-                  static_cast<long long>(coarseCorrectionLastDeltaUs_),
-                  static_cast<long>(microsecondsToMillisecondsPart(coarseCorrectionLastDeltaUs_)),
-                  static_cast<long>(microsecondsToSubMillisecondPart(coarseCorrectionLastDeltaUs_)),
-                  static_cast<long long>(kMaxPpsCoarseDeltaUs),
-                  static_cast<unsigned long long>(referenceEpochUsUtc),
-                  static_cast<unsigned long long>(coarseEpochUsUtc),
-                  static_cast<unsigned long>(coarseReceivedUs));
-  }
-
-  coarseCorrectionDeltaSumUs_ += deltaUs;
-  ++coarseCorrectionDeltaCount_;
-  const uint32_t windowAgeMs = nowMs - coarseCorrectionWindowStartMs_;
-  const int64_t runningAvgDeltaUs =
-      coarseCorrectionDeltaSumUs_ / static_cast<int64_t>(coarseCorrectionDeltaCount_);
-  Serial.printf("COARSE averaging sample | count=%lu avgDeltaUs=%lld avgDeltaMs=%ld avgDeltaSubUs=%ld\n",
-                static_cast<unsigned long>(coarseCorrectionDeltaCount_),
-                static_cast<long long>(runningAvgDeltaUs),
-                static_cast<long>(microsecondsToMillisecondsPart(runningAvgDeltaUs)),
-                static_cast<long>(microsecondsToSubMillisecondPart(runningAvgDeltaUs)));
-
-  if (windowAgeMs < kCoarseCorrectionWindowMs) {
-    return false;
-  }
-
-  const int64_t avgDeltaUs =
-      coarseCorrectionDeltaSumUs_ / static_cast<int64_t>(coarseCorrectionDeltaCount_);
-  const int32_t correctionUs = static_cast<int32_t>(avgDeltaUs / 10LL);
+  const int32_t correctionUs = static_cast<int32_t>(deltaMs * 100LL);
+  const int64_t correctionSubMsUs = abs64(correctionUs) % 1000LL;
   coarseCorrectionLastAppliedUs_ = correctionUs;
 
-  bool applied = false;
   uint64_t currentHoldoverUsValue = 0;
-  int64_t correctedHoldoverUs = 0;
-  if (applyToHoldover && correctionUs != 0) {
-    if (currentHoldoverUs(currentHoldoverUsValue)) {
-      correctedHoldoverUs = static_cast<int64_t>(currentHoldoverUsValue) + correctionUs;
-      if (correctedHoldoverUs > 0) {
-        holdoverCorrectionOffsetUs_ += correctionUs;
-        if (updateServedEpoch) {
-          epochUsUtcInOut = static_cast<uint64_t>(correctedHoldoverUs);
-        }
-        ++coarseEpochUseCount_;
-        anchorHoldoverRawUs(static_cast<uint64_t>(correctedHoldoverUs));
-        applied = true;
-      }
-    }
+  if (!currentHoldoverUs(currentHoldoverUsValue)) {
+    return false;
   }
-  Serial.printf("COARSE averaging complete | correctionUs=%ld\n",
-                static_cast<long>(correctionUs));
 
-  resetCoarseCorrectionWindow();
-  return applied;
+  const int64_t correctedHoldoverUs =
+      static_cast<int64_t>(currentHoldoverUsValue) + correctionUs;
+  if (correctedHoldoverUs <= 0) {
+    return false;
+  }
+
+  holdoverCorrectionOffsetUs_ += correctionUs;
+  epochUsUtcInOut = static_cast<uint64_t>(correctedHoldoverUs);
+  ++coarseEpochUseCount_;
+  anchorHoldoverRawUs(static_cast<uint64_t>(correctedHoldoverUs));
+  Serial.printf("%s coarse correction applied | deltaMs=%lld correction=%s%ld.%03lldms \n",
+                sourceLabel,
+                static_cast<long long>(deltaMs),
+                correctionUs < 0 ? "-" : "",
+                static_cast<long>(abs64(correctionUs) / 1000LL),
+                static_cast<long long>(correctionSubMsUs));
+
+  return true;
 }
 
-bool GnssClock::deltaExceedsThreshold(int64_t deltaUs, int64_t thresholdUs) {
-  return deltaUs > thresholdUs || deltaUs < -thresholdUs;
-}
-
-int32_t GnssClock::microsecondsToMillisecondsPart(int64_t valueUs) {
-  return static_cast<int32_t>(valueUs / 1000LL);
-}
-
-int32_t GnssClock::microsecondsToSubMillisecondPart(int64_t valueUs) {
-  return static_cast<int32_t>(valueUs % 1000LL);
+int64_t GnssClock::abs64(int64_t value) {
+  return value < 0 ? -value : value;
 }

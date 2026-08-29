@@ -16,9 +16,10 @@ struct GpsDashboardSettings {
 
 enum GpsClockState : uint8_t {
   GPS_CLOCK_STATE_UNSYNCED = 0,
-  GPS_CLOCK_STATE_ACQUIRING = 1,
-  GPS_CLOCK_STATE_LOCKED = 2,
-  GPS_CLOCK_STATE_HOLDOVER = 3,
+  GPS_CLOCK_STATE_CONFIRMED_TIME = 1,
+  GPS_CLOCK_STATE_ACQUIRED = 2,
+  GPS_CLOCK_STATE_PPS_LOCKED = 3,
+  GPS_CLOCK_STATE_HOLDOVER = 4,
 };
 
 struct GpsDashboardStatus {
@@ -44,6 +45,8 @@ struct GpsDashboardStatus {
   GpsClockState clockState = GPS_CLOCK_STATE_UNSYNCED;
   bool holdoverTimeoutValid = false;
   uint32_t holdoverRemainingSeconds = 0;
+  bool navPvtConfirmedTimeReady = false;
+  uint64_t navPvtConfirmedTimeEpochUtcMicros = 0;
   bool gpsTimeValid = false;
   uint64_t gpsEpochUtcMicros = 0;
   uint32_t coarseEpochUseCount = 0;
@@ -107,6 +110,8 @@ struct GpsDashboardStatus {
   float cpuUtilizationPercent = 0.0f;
   float cpuUtilizationPeakPercent = 0.0f;
   float internalTemperatureC = 0.0f;
+  uint32_t freeHeapBytes = 0;
+  uint64_t uptimeSeconds = 0;
 };
 
 // Captive-portal Wi-Fi provisioning for ESP32.

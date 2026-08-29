@@ -13,6 +13,7 @@
 #include "NtpServer.h"
 #include "OledClockDisplay.h"
 #include "PpsCapture.h"
+#include "SysHealth.h"
 #include "WiFiSetupPortal.h"
 
 namespace {
@@ -20,14 +21,12 @@ constexpr uint32_t DISPLAY_INTERVAL_MS = 1000UL;
 constexpr uint32_t RESET_OVERLAY_DELAY_MS = 500UL;
 constexpr uint32_t WIFI_RESET_HOLD_MS = 3000UL;
 constexpr uint32_t MAIN_LOOP_IDLE_DELAY_MS = 1UL;
-constexpr uint64_t CPU_SAMPLE_INTERVAL_US = 100000ULL;
-constexpr uint8_t CPU_REPORT_SAMPLE_COUNT = 10;
 
 constexpr uint8_t I2C_SDA_PIN = 32;
 constexpr uint8_t I2C_SCL_PIN = 33;
 constexpr uint8_t GNSS_RX_PIN = 22;
 constexpr uint8_t GNSS_TX_PIN = 21;
-constexpr uint8_t PPS_PIN = 26;
+constexpr uint8_t PPS_PIN = 27;
 constexpr uint8_t BOOT_BUTTON_PIN = 0;
 
 // constexpr uint32_t PPS_MCPWM_TICKS_PER_SECOND = 80000000UL;  // don't delete this line
@@ -44,23 +43,17 @@ DashboardStore dashboardStore;
 BootButton bootButton(BOOT_BUTTON_PIN, LOW, 40, 400, WIFI_RESET_HOLD_MS);
 U8G2_SH1106_128X64_NONAME_F_HW_I2C displayDriver(U8G2_R0, U8X8_PIN_NONE);
 OledClockDisplay oledDisplay(displayDriver);
+SysHealth sysHealth;
 
 unsigned long lastDisplayUpdateMs = 0;
 unsigned long lastGpsStatusLogMs = 0;
+unsigned long lastCpuTemperatureLogMs = 0;
 bool wasGpsValid = false;
 char apSsid[24] = "ESP-Setup";
 GpsDashboardSettings gpsDashboardSettings;
 bool holdoverClockValid = false;
 uint32_t holdoverBaseEpochUtc = 0;
 unsigned long holdoverSetAtMs = 0;
-float currentCpuUtilizationPercent = 0.0f;
-float currentCpuUtilizationPeakPercent = 0.0f;
-float currentInternalTemperatureC = 0.0f;
-uint64_t cpuSampleWindowStartUs = 0;
-uint64_t cpuSampleBusyUs = 0;
-float cpuReportSampleSumPercent = 0.0f;
-float cpuReportSamplePeakPercent = 0.0f;
-uint8_t cpuReportSamples = 0;
 
 void applyGpsDashboardSettings() {
   gps.enableRawLogging(gpsDashboardSettings.rawLoggingEnabled);
@@ -94,13 +87,19 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
   statusOut.ppsPeriodSeconds = ppsCapture.lastPeriodSeconds();
 
   uint64_t epochUsUtc = 0;
+  statusOut.navPvtConfirmedTimeReady = gnssClock.navPvtConfirmedTimeEpochUs(epochUsUtc);
+  if (statusOut.navPvtConfirmedTimeReady) {
+    statusOut.navPvtConfirmedTimeEpochUtcMicros = epochUsUtc;
+  }
+
   statusOut.gpsTimeValid = gnssClock.navPvtCoarseEpochUs(epochUsUtc);
   if (statusOut.gpsTimeValid) {
     statusOut.gpsEpochUtcMicros = epochUsUtc;
   }
 
-  uint64_t ntpEpochUsUtc = 0;
-  statusOut.ntpReady = gnssClock.currentNtpEpochUs(ntpEpochUsUtc);
+  uint64_t ppsEpochNsUtc = 0;
+  const bool ppsNtpReady =
+      statusOut.ppsAligned && gps.currentUtcEpochNsPps(ppsEpochNsUtc);
   const GnssClockDiagnostics clockDiagnostics = gnssClock.diagnostics();
   statusOut.coarseEpochUseCount = clockDiagnostics.coarseEpochUseCount;
   statusOut.correctionUs = clockDiagnostics.coarseCorrectionLastAppliedUs;
@@ -111,6 +110,13 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
     statusOut.holdoverUtcValid = clockDiagnostics.holdoverUtcValid;
     statusOut.holdoverEpochUtcMicros = clockDiagnostics.holdoverEpochUtcMicros;
   }
+  statusOut.ntpReady =
+      ppsNtpReady ||
+      statusOut.gpsTimeValid ||
+      statusOut.navPvtConfirmedTimeReady ||
+      (settingsOut.ntpHoldoverEnabled &&
+       clockDiagnostics.holdoverUtcValid &&
+       clockDiagnostics.holdoverTimeoutValid);
 
   {
     GnssMonRfData monRf;
@@ -144,9 +150,12 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
   statusOut.gpsUartLabel = F("GPIO22 <- GNSS TX, GPIO21 -> GNSS RX");
   statusOut.ppsPinLabel = F("GPIO27");
   statusOut.gpsBaudRate = GNSS_BAUD_RATE;
-  statusOut.cpuUtilizationPercent = currentCpuUtilizationPercent;
-  statusOut.cpuUtilizationPeakPercent = currentCpuUtilizationPeakPercent;
-  statusOut.internalTemperatureC = currentInternalTemperatureC;
+  const SysHealthSnapshot health = sysHealth.snapshot();
+  statusOut.cpuUtilizationPercent = health.cpuUtilizationPercent;
+  statusOut.cpuUtilizationPeakPercent = health.cpuUtilizationPeakPercent;
+  statusOut.internalTemperatureC = health.internalTemperatureC;
+  statusOut.freeHeapBytes = health.freeHeapBytes;
+  statusOut.uptimeSeconds = health.uptimeSeconds;
 
   {
     GnssNavPvtData pvt;
@@ -247,49 +256,13 @@ const char* resetReasonToString(esp_reset_reason_t reason) {
   }
 }
 
-float readEspTemperatureC() {
-  const float reading = temperatureRead();
-  if (reading < -40.0f || reading > 120.0f) {
-    return 0.0f;
-  }
-  return reading;
-}
-
-void updateCpuUtilization(uint64_t loopBusyUs) {
-  const uint64_t nowUs = micros();
-  if (cpuSampleWindowStartUs == 0) {
-    cpuSampleWindowStartUs = nowUs;
-  }
-
-  cpuSampleBusyUs += loopBusyUs;
-  const uint64_t sampleElapsedUs = nowUs - cpuSampleWindowStartUs;
-  if (sampleElapsedUs < CPU_SAMPLE_INTERVAL_US) {
+void logCpuTemperature(uint32_t nowMs) {
+  if (nowMs - lastCpuTemperatureLogMs < 1000UL) {
     return;
   }
 
-  float samplePercent =
-      (static_cast<float>(cpuSampleBusyUs) / static_cast<float>(sampleElapsedUs)) * 100.0f;
-  if (samplePercent > 100.0f) {
-    samplePercent = 100.0f;
-  }
-
-  cpuReportSampleSumPercent += samplePercent;
-  if (samplePercent > cpuReportSamplePeakPercent) {
-    cpuReportSamplePeakPercent = samplePercent;
-  }
-  ++cpuReportSamples;
-
-  cpuSampleBusyUs = 0;
-  cpuSampleWindowStartUs = nowUs;
-
-  if (cpuReportSamples >= CPU_REPORT_SAMPLE_COUNT) {
-    currentCpuUtilizationPercent = cpuReportSampleSumPercent / cpuReportSamples;
-    currentCpuUtilizationPeakPercent = cpuReportSamplePeakPercent;
-    currentInternalTemperatureC = readEspTemperatureC();
-    cpuReportSampleSumPercent = 0.0f;
-    cpuReportSamplePeakPercent = 0.0f;
-    cpuReportSamples = 0;
-  }
+  lastCpuTemperatureLogMs = nowMs;
+  Serial.printf("CPU temperature: %.1f C\n", sysHealth.internalTemperatureC());
 }
 
 String formatUtcTimeForNmea(uint32_t epochUtc) {
@@ -352,7 +325,7 @@ void processPpsCapture() {
   Serial.printf(" | fq=%lu | fqdiff=%ld | CPU: %.1f C",
                 static_cast<unsigned long>(pulse.diffTicks),
                 static_cast<long>(pulse.frequencyDiffTicks),
-                currentInternalTemperatureC);
+                sysHealth.internalTemperatureC());
   Serial.println();
 }
 
@@ -459,6 +432,7 @@ void updateDisplay(uint32_t nowMs) {
 void setup() {
   Serial.begin(115200);
   delay(100);
+  sysHealth.begin();
 
   const esp_reset_reason_t resetReason = esp_reset_reason();
   Serial.printf("Reset reason: %s\n", resetReasonToString(resetReason));
@@ -549,6 +523,7 @@ void loop() {
     }
   }
 
-  updateCpuUtilization(micros() - loopStartUs);
+  sysHealth.update(micros() - loopStartUs);
+  logCpuTemperature(nowMs);
   delay(MAIN_LOOP_IDLE_DELAY_MS);
 }

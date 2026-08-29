@@ -31,10 +31,12 @@ String yesNoLabel(bool value) {
 
 String clockStateLabel(GpsClockState state) {
   switch (state) {
-    case GPS_CLOCK_STATE_ACQUIRING:
-      return F("ACQUIRING");
-    case GPS_CLOCK_STATE_LOCKED:
-      return F("LOCKED");
+    case GPS_CLOCK_STATE_CONFIRMED_TIME:
+      return F("ConfirmedTime");
+    case GPS_CLOCK_STATE_ACQUIRED:
+      return F("ACQUIRED");
+    case GPS_CLOCK_STATE_PPS_LOCKED:
+      return F("PPSLocked");
     case GPS_CLOCK_STATE_HOLDOVER:
       return F("HOLDOVER");
     case GPS_CLOCK_STATE_UNSYNCED:
@@ -43,11 +45,51 @@ String clockStateLabel(GpsClockState state) {
   }
 }
 
+String formatBytes(uint32_t bytes) {
+  if (bytes >= 1048576UL) {
+    return String(static_cast<float>(bytes) / 1048576.0f, 1) + F(" MB");
+  }
+  if (bytes >= 1024UL) {
+    return String(static_cast<float>(bytes) / 1024.0f, 1) + F(" KB");
+  }
+  return String(bytes) + F(" B");
+}
+
+String formatUptime(uint64_t seconds) {
+  const uint64_t days = seconds / 86400ULL;
+  seconds %= 86400ULL;
+  const uint8_t hours = seconds / 3600ULL;
+  seconds %= 3600ULL;
+  const uint8_t minutes = seconds / 60ULL;
+  const uint8_t secs = seconds % 60ULL;
+
+  char buffer[40];
+  if (days > 0) {
+    snprintf(buffer,
+             sizeof(buffer),
+             "%llud %02uh %02um %02us",
+             static_cast<unsigned long long>(days),
+             static_cast<unsigned>(hours),
+             static_cast<unsigned>(minutes),
+             static_cast<unsigned>(secs));
+  } else {
+    snprintf(buffer,
+             sizeof(buffer),
+             "%02uh %02um %02us",
+             static_cast<unsigned>(hours),
+             static_cast<unsigned>(minutes),
+             static_cast<unsigned>(secs));
+  }
+  return String(buffer);
+}
+
 String clockStateDetail(GpsClockState state) {
   switch (state) {
-    case GPS_CLOCK_STATE_ACQUIRING:
+    case GPS_CLOCK_STATE_CONFIRMED_TIME:
+      return F("NAV-PVT date/time is fully resolved and confirmed; serving quick NTP.");
+    case GPS_CLOCK_STATE_ACQUIRED:
       return F("NAV-PVT UTC valid; waiting for valid TIM-TP + PPS.");
-    case GPS_CLOCK_STATE_LOCKED:
+    case GPS_CLOCK_STATE_PPS_LOCKED:
       return F("TIM-TP valid, PPS valid, timer disciplined.");
     case GPS_CLOCK_STATE_HOLDOVER:
       return F("PPS disappeared; running from last disciplined timer.");
@@ -811,6 +853,8 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
   if (status.internalTemperatureC > -40.0f && status.internalTemperatureC < 120.0f) {
     temperatureText = String(status.internalTemperatureC, 1) + F("°C");
   }
+  const String freeHeapText = formatBytes(status.freeHeapBytes);
+  const String uptimeText = formatUptime(status.uptimeSeconds);
 
   const String satelliteCount = status.satelliteCountValid ? String(status.satelliteCount) : String(F("--"));
   String page = F("<!DOCTYPE html><html><head>"
@@ -851,6 +895,10 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
   page += htmlEscape(cpuText);
   page += F("</div><div>Temp: ");
   page += htmlEscape(temperatureText);
+  page += F("</div><div>Free heap: ");
+  page += htmlEscape(freeHeapText);
+  page += F("</div><div>Uptime: ");
+  page += htmlEscape(uptimeText);
   page += F("</div></div></div>");
 
   if (settings.enableStats) {
@@ -899,7 +947,7 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
     page += F(" checked");
   }
   page += F(">"
-            "<span><strong>NTP holdover after PPS with UBX-TIM-TP</strong><span>Keep answering from the last TIM-TP anchored PPS time during short PPS outages.</span></span></label>"
+            "<span><strong>NTP holdover after PPSLocked, ACQUIRED, or ConfirmedTime</strong><span>Keep answering from the last PPS-locked, acquired, or NAV-PVT confirmed-time UTC during short outages.</span></span></label>"
             "<label class=\"toggle\"><input type=\"checkbox\" name=\"enable_stats\""
   );
   if (settings.enableStats) {
@@ -1032,13 +1080,18 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
   page += F("</span><div class=\"state-detail\">");
   page += htmlEscape(clockStateDetail(status.clockState));
   page += F("</div></div><div class=\"item\"><span class=\"label\">Holdover timeout</span><span class=\"state-value\" id=\"holdover-countdown\"");
-  if (status.clockState == GPS_CLOCK_STATE_HOLDOVER && status.holdoverTimeoutValid) {
+  const bool showHoldoverTimeout =
+      (status.clockState == GPS_CLOCK_STATE_HOLDOVER ||
+       status.clockState == GPS_CLOCK_STATE_CONFIRMED_TIME ||
+       status.clockState == GPS_CLOCK_STATE_ACQUIRED) &&
+      status.holdoverTimeoutValid;
+  if (showHoldoverTimeout) {
     page += F(" data-remaining=\"");
     page += htmlEscape(String(status.holdoverRemainingSeconds));
     page += F("\"");
   }
   page += F(">");
-  if (status.clockState == GPS_CLOCK_STATE_HOLDOVER && status.holdoverTimeoutValid) {
+  if (showHoldoverTimeout) {
     page += htmlEscape(holdoverCountdownLabel(status.holdoverRemainingSeconds));
   } else {
     page += F("--");
@@ -1199,8 +1252,8 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
             "renderCountdown();"
             "setInterval(function(){"
             "remaining-=1;"
-            "if(remaining<0){window.location.reload();return;}"
             "renderCountdown();"
+            "if(remaining<=0){window.location.reload();return;}"
             "},1000);"
             "}"
             "})();</script>");
