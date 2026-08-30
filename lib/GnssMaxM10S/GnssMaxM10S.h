@@ -115,6 +115,7 @@ class GnssMaxM10S {
   // instead of relying on a separately-clocked software timer.
   using TickClockFn = std::function<uint32_t()>;
   void configurePpsHardwareClock(TickClockFn nowTicksFn, uint32_t ticksPerSecond);
+  void setPpsHardwareTicksPerSecond(uint32_t ticksPerSecond);
   void onPpsEdge(uint32_t edgeTicks, uint32_t elapsedPulses = 1);
   ClockStamp latestUtc();
   bool currentUtcEpoch(uint32_t& epochUtcOut);

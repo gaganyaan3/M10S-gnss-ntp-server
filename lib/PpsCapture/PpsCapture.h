@@ -23,6 +23,7 @@ class PpsCapture {
   uint32_t nowTicks();
   uint64_t nowTicks64();
   bool consumePulse(PpsPulse& pulseOut);
+  void setTicksPerSecond(uint32_t ticksPerSecond);
   uint32_t pulseCount() const;
   uint32_t ticksPerSecond() const;
   double lastPeriodSeconds() const;

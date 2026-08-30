@@ -273,6 +273,13 @@ void GnssMaxM10S::configurePpsHardwareClock(TickClockFn nowTicksFn, uint32_t tic
   ppsNominalTicksPerSecond_ = (ticksPerSecond > 0) ? ticksPerSecond : 1000000UL;
 }
 
+void GnssMaxM10S::setPpsHardwareTicksPerSecond(uint32_t ticksPerSecond) {
+  if (ticksPerSecond == 0) {
+    return;
+  }
+  ppsNominalTicksPerSecond_ = ticksPerSecond;
+}
+
 void GnssMaxM10S::onPpsEdge(uint32_t edgeTicks, uint32_t elapsedPulses) {
   if (elapsedPulses == 0) {
     elapsedPulses = 1;

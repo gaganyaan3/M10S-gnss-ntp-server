@@ -74,6 +74,13 @@ bool PpsCapture::consumePulse(PpsPulse& pulseOut) {
   return true;
 }
 
+void PpsCapture::setTicksPerSecond(uint32_t ticksPerSecond) {
+  if (ticksPerSecond == 0) {
+    return;
+  }
+  ticksPerSecond_ = ticksPerSecond;
+}
+
 uint32_t PpsCapture::pulseCount() const {
   uint32_t pulseCountSnapshot = 0;
   noInterrupts();

@@ -6,6 +6,7 @@
 #include <time.h>
 
 #include "BootButton.h"
+#include "CalibratedFqMap.h"
 #include "DashboardStore.h"
 #include "GnssClock.h"
 #include "GnssMaxM10S.h"
@@ -38,7 +39,8 @@ constexpr uint8_t PPS_PIN = 27;
 constexpr uint8_t BOOT_BUTTON_PIN = 0;
 
 // constexpr uint32_t PPS_MCPWM_TICKS_PER_SECOND = 80000000UL;  // don't delete this line
-constexpr uint32_t PPS_MCPWM_TICKS_PER_SECOND = 79998038UL;  // used calibrated MCPWM at 58°C - don't delete this line
+uint32_t PPS_MCPWM_TICKS_PER_SECOND = CalibratedFqMap::DEFAULT_TICKS_PER_SECOND;  // used calibrated MCPWM at 58°C - don't delete this line
+constexpr bool PPS_MCPWM_TEMPERATURE_CALIBRATION_ENABLED = true;
 constexpr uint32_t GNSS_BAUD_RATE = 115200UL;
 
 WiFiSetupPortal wifiPortal;
@@ -65,6 +67,32 @@ bool holdoverClockValid = false;
 uint32_t holdoverBaseEpochUtc = 0;
 unsigned long holdoverSetAtMs = 0;
 bool otaDisabledLogged = false;
+int16_t appliedPpsMcpwmTemperatureDeciC = INT16_MIN;
+
+void updatePpsMcpwmTicksPerSecondFromCpuTemperature(bool forceLog = false) {
+  const float temperatureC = sysHealth.internalTemperatureC();
+  const CalibratedFqValue calibration =
+      PPS_MCPWM_TEMPERATURE_CALIBRATION_ENABLED
+          ? CalibratedFqMap::nearestForTemperatureC(temperatureC)
+          : CalibratedFqValue{0, CalibratedFqMap::DEFAULT_TICKS_PER_SECOND};
+  if (!forceLog && calibration.temperatureDeciC == appliedPpsMcpwmTemperatureDeciC) {
+    return;
+  }
+
+  appliedPpsMcpwmTemperatureDeciC = calibration.temperatureDeciC;
+  PPS_MCPWM_TICKS_PER_SECOND = calibration.ticksPerSecond;
+  ppsCapture.setTicksPerSecond(PPS_MCPWM_TICKS_PER_SECOND);
+  gps.setPpsHardwareTicksPerSecond(PPS_MCPWM_TICKS_PER_SECOND);
+  if (PPS_MCPWM_TEMPERATURE_CALIBRATION_ENABLED) {
+    Serial.printf("MCPWM calibration: CPU %.1f C -> %.1f C map, %lu Hz\n",
+                  temperatureC,
+                  static_cast<double>(calibration.temperatureDeciC) / 10.0,
+                  static_cast<unsigned long>(PPS_MCPWM_TICKS_PER_SECOND));
+  } else if (forceLog) {
+    Serial.printf("MCPWM calibration disabled: using default %lu Hz\n",
+                  static_cast<unsigned long>(PPS_MCPWM_TICKS_PER_SECOND));
+  }
+}
 
 void applyGpsDashboardSettings() {
   gps.enableRawLogging(gpsDashboardSettings.rawLoggingEnabled);
@@ -459,6 +487,7 @@ void setup() {
   Serial.begin(115200);
   delay(100);
   sysHealth.begin();
+  updatePpsMcpwmTicksPerSecondFromCpuTemperature(true);
 
   const esp_reset_reason_t resetReason = esp_reset_reason();
   Serial.printf("Reset reason: %s\n", resetReasonToString(resetReason));
@@ -555,6 +584,7 @@ void loop() {
   }
 
   sysHealth.update(micros() - loopStartUs);
+  updatePpsMcpwmTicksPerSecondFromCpuTemperature();
   logCpuTemperature(nowMs);
   delay(MAIN_LOOP_IDLE_DELAY_MS);
 }

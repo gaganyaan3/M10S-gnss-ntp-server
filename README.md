@@ -257,7 +257,7 @@ The internal Digitally Controlled Oscillator (NCO) clock inside the M10 generati
 
 ```
 - option to force update GNSS NAV-PVT time from dashboard
-- Discipline the ESP32 oscillator MCPWM clock diff between PPS tick 1 and 2 should be ~80Mhz and compasate with cpu temp
+- ESP32 MCPWM tick-rate compensation is applied from `CalibratedFqMap` based on the sampled CPU temperature. Set `PPS_MCPWM_TEMPERATURE_CALIBRATION_ENABLED` false in `src/main.cpp` to use `CalibratedFqMap::DEFAULT_TICKS_PER_SECOND`.
 - Typical coax with velocity factor 0.66–0.85: about **4–5 ns per meter*
 - chec if MAIN_LOOP_IDLE_DELAY_MS=1ms is needed? it came as flase cpu utilization
 ```
@@ -329,6 +329,8 @@ pio run -e esp32dev_ota -t upload --upload-port 192.168.10.90
 ## Project Structure
 
 - [src/main.cpp](src/main.cpp): firmware orchestration — setup wiring, loop polling order, Wi-Fi/NMEA/NTP callbacks, dashboard data assembly
+- [lib/CalibratedFqMap/CalibratedFqMap.h](lib/CalibratedFqMap/CalibratedFqMap.h): CPU-temperature-to-MCPWM-frequency calibration API
+- [lib/CalibratedFqMap/CalibratedFqMap.cpp](lib/CalibratedFqMap/CalibratedFqMap.cpp): calibrated `PPS_MCPWM_TICKS_PER_SECOND_MAP` and nearest-temperature lookup
 - [lib/PpsCapture/PpsCapture.h](lib/PpsCapture/PpsCapture.h): MCPWM PPS capture interface, pulse snapshots, tick source API
 - [lib/PpsCapture/PpsCapture.cpp](lib/PpsCapture/PpsCapture.cpp): PPS capture ISR, software-forced "now" capture, 64-bit tick extension, period stats
 - [lib/GnssClock/GnssClock.h](lib/GnssClock/GnssClock.h): GNSS-backed NTP clock interface, holdover diagnostics, clock-state helper
