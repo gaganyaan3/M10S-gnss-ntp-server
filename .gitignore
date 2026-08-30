@@ -7,3 +7,4 @@ AGENT.md
 HARDWARE.md
 PROJECT.md
 OTAPLAN.md
+include/OtaSecrets.h

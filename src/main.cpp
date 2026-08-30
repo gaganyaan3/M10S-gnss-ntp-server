@@ -12,9 +12,17 @@
 #include "NmeaServer.h"
 #include "NtpServer.h"
 #include "OledClockDisplay.h"
+#include "OtaUpdate.h"
 #include "PpsCapture.h"
 #include "SysHealth.h"
 #include "WiFiSetupPortal.h"
+
+#if __has_include("OtaSecrets.h")
+#include "OtaSecrets.h"
+#define OTA_UPDATE_ENABLED 1
+#else
+#define OTA_UPDATE_ENABLED 0
+#endif
 
 namespace {
 constexpr uint32_t DISPLAY_INTERVAL_MS = 1000UL;
@@ -44,16 +52,19 @@ BootButton bootButton(BOOT_BUTTON_PIN, LOW, 40, 400, WIFI_RESET_HOLD_MS);
 U8G2_SH1106_128X64_NONAME_F_HW_I2C displayDriver(U8G2_R0, U8X8_PIN_NONE);
 OledClockDisplay oledDisplay(displayDriver);
 SysHealth sysHealth;
+OtaUpdate otaUpdate;
 
 unsigned long lastDisplayUpdateMs = 0;
 unsigned long lastGpsStatusLogMs = 0;
 unsigned long lastCpuTemperatureLogMs = 0;
 bool wasGpsValid = false;
 char apSsid[24] = "ESP-Setup";
+char otaHostname[32] = "esp32-m10s-gps";
 GpsDashboardSettings gpsDashboardSettings;
 bool holdoverClockValid = false;
 uint32_t holdoverBaseEpochUtc = 0;
 unsigned long holdoverSetAtMs = 0;
+bool otaDisabledLogged = false;
 
 void applyGpsDashboardSettings() {
   gps.enableRawLogging(gpsDashboardSettings.rawLoggingEnabled);
@@ -265,6 +276,21 @@ void logCpuTemperature(uint32_t nowMs) {
   Serial.printf("CPU temperature: %.1f C\n", sysHealth.internalTemperatureC());
 }
 
+void beginOtaIfReady() {
+#if OTA_UPDATE_ENABLED
+  if (!wifiPortal.isConnected() || wifiPortal.isActive()) {
+    return;
+  }
+
+  otaUpdate.begin(otaHostname, OTA_PASSWORD_HASH);
+#else
+  if (!otaDisabledLogged && wifiPortal.isConnected() && !wifiPortal.isActive()) {
+    otaDisabledLogged = true;
+    Serial.println("OTA disabled: create include/OtaSecrets.h to enable authenticated OTA");
+  }
+#endif
+}
+
 String formatUtcTimeForNmea(uint32_t epochUtc) {
   time_t utcEpoch = static_cast<time_t>(epochUtc);
   struct tm tmValue;
@@ -459,11 +485,13 @@ void setup() {
   uint8_t mac[6] = {0};
   WiFi.macAddress(mac);
   snprintf(apSsid, sizeof(apSsid), "ESP-%02X%02X%02X", mac[3], mac[4], mac[5]);
+  snprintf(otaHostname, sizeof(otaHostname), "esp32-m10s-gps-%02X%02X%02X", mac[3], mac[4], mac[5]);
 
   wifiPortal.setApCredentials(apSsid);
   wifiPortal.setGpsDashboardCallbacks(fillGpsDashboardData, saveGpsDashboardSettings);
   wifiPortal.setResetPin(BOOT_BUTTON_PIN, WIFI_RESET_HOLD_MS, LOW);
   wifiPortal.begin();
+  beginOtaIfReady();
 
   gps.begin();
   applyGpsDashboardSettings();
@@ -496,6 +524,9 @@ void loop() {
   processBootButton(nowMs);
 
   wifiPortal.loop();
+  beginOtaIfReady();
+  otaUpdate.loop();
+
   bool showingResetHoldOverlay = false;
   if (wifiPortal.isResetPending()) {
     const uint32_t heldMs = wifiPortal.resetHeldMs();
