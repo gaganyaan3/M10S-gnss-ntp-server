@@ -32,7 +32,7 @@ class GnssClock {
  private:
   static constexpr uint32_t kHoldoverTimeoutMs = 1440UL * 60UL * 1000UL;
   static constexpr uint32_t kAcquiredHoldoverTimeoutMs = 60UL * 1000UL; // Timeout holdover for Coarse Correction
-  static constexpr uint32_t kConfirmedTimeHoldoverTimeoutMs = 60UL * 1000UL; // Timeout holdover for ConfirmedTime Coarse Correction
+  static constexpr uint32_t kConfirmedTimeHoldoverTimeoutMs = 1UL * 1000UL; // Timeout holdover for ConfirmedTime Coarse Correction
   static constexpr int64_t kMaxAcquiredCoarseDeltaMs = 10; // Diff for Coarse Correction between holdover and NAV-PVT
   static constexpr int64_t kMaxAcquiredCoarseIgnoreDeltaMs = 100;
 

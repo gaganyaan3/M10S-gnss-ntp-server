@@ -207,6 +207,36 @@ If upload port is not auto-detected:
 pio run -t upload --upload-port /dev/ttyUSB0
 ```
 
+### OTA Upload
+
+OTA is implemented as a separate `lib/OtaUpdate` wrapper around `ArduinoOTA`.
+It starts only after the ESP32 is connected to station Wi-Fi and the setup
+hotspot is inactive.
+
+Create a local secrets file from the example:
+
+```bash
+cp include/OtaSecrets.example.h include/OtaSecrets.h
+```
+
+Put the MD5 hash of your OTA password in `include/OtaSecrets.h`. This file is
+ignored by git.
+
+Generate the hash:
+
+```bash
+printf '%s' 'your-real-ota-password' | md5sum
+```
+
+Upload over OTA:
+
+```bash
+OTA_PASSWORD='your-real-ota-password' pio run -e esp32dev_ota -t upload
+```
+
+The OTA target IP is configured in `platformio.ini` as `192.168.10.96`.
+Prefer a router DHCP reservation so this IP stays stable.
+
 ## future plan: can be added 
 ```
 UBX-NAV-PVT
@@ -217,19 +247,6 @@ UBX-TIM-TP
 UBX-NAV-CLOCK
 UBX-NAV-TIMEUTC
 UBX-NAV-TIMEGPS
-
-UBX-MON-RF
-    antenna status
-    jamming/interference information
-
-Current GNSS solution valid?
-    gnssFixOK
-    fixType >= 2/3 as appropriate
-
-Current timing source healthy?
-    PPS arriving
-    PPS interval reasonable
-    recent valid GNSS information
 
 UBX-TIM-TP
     TIM-TP = tells you WHICH second
@@ -284,6 +301,29 @@ Timer being disciplined.
 HOLDOVER
 PPS disappeared.
 Running from previously measured timer frequency.
+```
+
+## Example PlatformIO Environment
+
+```ini
+[env:esp32dev_ota]
+extends = env:esp32dev
+upload_protocol = espota
+upload_port = 192.168.10.90
+;upload_flags =
+;  --auth=your-real-ota-password
+upload_flags =
+  --auth=${sysenv.OTA_PASSWORD}
+```
+
+Upload over OTA with:
+
+```bash
+pio run -e esp32dev_ota -t upload
+
+#OR
+export OTA_PASSWORD='your-real-ota-password'
+pio run -e esp32dev_ota -t upload --upload-port 192.168.10.90
 ```
 
 ## Project Structure
