@@ -916,6 +916,8 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
                   ".label{display:block;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.56);margin-bottom:6px}"
                   ".label .unit{text-transform:none}"
                   ".value{font-size:18px;font-weight:700;word-break:break-word}"
+                  ".state-value{font-size:28px;font-weight:800;letter-spacing:0}"
+                  ".state-detail{margin-top:6px;color:rgba(255,255,255,0.72);font-size:14px;line-height:1.4}"
                   "form{display:grid;gap:14px}"
                   ".toggle{display:flex;gap:12px;align-items:flex-start;background:rgba(255,255,255,0.05);border-radius:12px;padding:14px}"
                   ".toggle input{margin-top:4px;transform:scale(1.2)}"
@@ -974,6 +976,29 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
   page += F("</span></div>");
   page += F("</div></div>");
 
+  page += F("<div class=\"card\"><h2>Clock state</h2>"
+            "<div class=\"grid\"><div class=\"item\"><span class=\"label\">Clock state</span><span class=\"state-value\">");
+  page += htmlEscape(clockStateLabel(status.clockState));
+  page += F("</span><div class=\"state-detail\">");
+  page += htmlEscape(clockStateDetail(status.clockState));
+  page += F("</div></div><div class=\"item\"><span class=\"label\">Holdover timeout</span><span class=\"state-value\" id=\"holdover-countdown\"");
+  const bool showHoldoverTimeout =
+      (status.clockState == GPS_CLOCK_STATE_HOLDOVER ||
+       status.clockState == GPS_CLOCK_STATE_CONFIRMED_TIME) &&
+      status.holdoverTimeoutValid;
+  if (showHoldoverTimeout) {
+    page += F(" data-remaining=\"");
+    page += htmlEscape(String(status.holdoverRemainingSeconds));
+    page += F("\"");
+  }
+  page += F(">");
+  if (showHoldoverTimeout) {
+    page += htmlEscape(holdoverCountdownLabel(status.holdoverRemainingSeconds));
+  } else {
+    page += F("--");
+  }
+  page += F("</span></div></div></div>");
+
   page += F("<div class=\"card\"><h2>Saved Settings</h2><form action=\"/gnss-save\" method=\"POST\">"
             "<label class=\"toggle\"><input type=\"checkbox\" name=\"raw_logging\"");
   if (settings.rawLoggingEnabled) {
@@ -1007,6 +1032,22 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
             "<button type=\"submit\">Save</button>"
             "<div class=\"banner\" id=\"save-banner\" style=\"display:none\">GPS settings saved to NVS.</div>"
             "<script>(function(){"
+            "var countdown=document.getElementById('holdover-countdown');"
+            "if(countdown&&countdown.dataset.remaining){"
+            "var remaining=parseInt(countdown.dataset.remaining,10);"
+            "function renderCountdown(){"
+            "var clamped=Math.max(0,remaining);"
+            "var minutes=Math.floor(clamped/60);"
+            "var seconds=clamped%60;"
+            "countdown.textContent=minutes+':'+String(seconds).padStart(2,'0');"
+            "}"
+            "renderCountdown();"
+            "var timer=setInterval(function(){"
+            "remaining-=1;"
+            "renderCountdown();"
+            "if(remaining<=0){clearInterval(timer);setTimeout(function(){window.location.reload();},1000);return;}"
+            "},1000);"
+            "}"
             "var b=document.getElementById('save-banner');"
             "if(window.location.hash==='\\#saved'&&b){"
             "b.style.display='block';"
@@ -1112,29 +1153,7 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
                   "<div class=\"card\"><h1>Stats</h1>"
                   "<p class=\"lead\">Live navigation snapshot rendered with the GNSS Config Dashboard theme.</p>"
                   "<a class=\"action\" href=\"/gnss\">Back to GNSS Config Dashboard</a>"
-                  "</div><div class=\"card\"><h2>Clock state</h2>"
-                  "<div class=\"grid\"><div class=\"item\"><span class=\"label\">Clock state</span><span class=\"state-value\">");
-  page += htmlEscape(clockStateLabel(status.clockState));
-  page += F("</span><div class=\"state-detail\">");
-  page += htmlEscape(clockStateDetail(status.clockState));
-  page += F("</div></div><div class=\"item\"><span class=\"label\">Holdover timeout</span><span class=\"state-value\" id=\"holdover-countdown\"");
-  const bool showHoldoverTimeout =
-      (status.clockState == GPS_CLOCK_STATE_HOLDOVER ||
-       status.clockState == GPS_CLOCK_STATE_CONFIRMED_TIME) &&
-      status.holdoverTimeoutValid;
-  if (showHoldoverTimeout) {
-    page += F(" data-remaining=\"");
-    page += htmlEscape(String(status.holdoverRemainingSeconds));
-    page += F("\"");
-  }
-  page += F(">");
-  if (showHoldoverTimeout) {
-    page += htmlEscape(holdoverCountdownLabel(status.holdoverRemainingSeconds));
-  } else {
-    page += F("--");
-  }
-  page += F("</span></div></div></div>"
-            "<div class=\"card\"><h2>UBX-NAV-PVT</h2><div class=\"grid\">"
+                  "</div><div class=\"card\"><h2>UBX-NAV-PVT</h2><div class=\"grid\">"
                   "<div class=\"item\"><span class=\"label\">Latitude</span><span class=\"value\">");
   page += htmlEscape(latitudeText);
   page += F("</span></div><div class=\"item\"><span class=\"label\">Longitude</span><span class=\"value\">");
@@ -1278,22 +1297,6 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
             "buttons.forEach(function(btn){"
             "btn.addEventListener('click',function(){openGroup(btn.dataset.target);});"
             "});"
-            "var countdown=document.getElementById('holdover-countdown');"
-            "if(countdown&&countdown.dataset.remaining){"
-            "var remaining=parseInt(countdown.dataset.remaining,10);"
-            "function renderCountdown(){"
-            "var clamped=Math.max(0,remaining);"
-            "var minutes=Math.floor(clamped/60);"
-            "var seconds=clamped%60;"
-            "countdown.textContent=minutes+':'+String(seconds).padStart(2,'0');"
-            "}"
-            "renderCountdown();"
-            "var timer=setInterval(function(){"
-            "remaining-=1;"
-            "renderCountdown();"
-            "if(remaining<=0){clearInterval(timer);setTimeout(function(){window.location.reload();},1000);return;}"
-            "},1000);"
-            "}"
             "})();</script>");
 
   page += F("</div></div></body></html>");
