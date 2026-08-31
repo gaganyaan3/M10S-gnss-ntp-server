@@ -83,6 +83,42 @@ String formatUptime(uint64_t seconds) {
   return String(buffer);
 }
 
+String formatElapsedCompact(uint32_t seconds) {
+  const uint32_t days = seconds / 86400UL;
+  seconds %= 86400UL;
+  const uint8_t hours = seconds / 3600UL;
+  seconds %= 3600UL;
+  const uint8_t minutes = seconds / 60UL;
+  const uint8_t secs = seconds % 60UL;
+
+  char buffer[40];
+  if (days > 0) {
+    snprintf(buffer,
+             sizeof(buffer),
+             "%lud %02uh %02um %02us",
+             static_cast<unsigned long>(days),
+             static_cast<unsigned>(hours),
+             static_cast<unsigned>(minutes),
+             static_cast<unsigned>(secs));
+  } else if (hours > 0) {
+    snprintf(buffer,
+             sizeof(buffer),
+             "%uh %02um %02us",
+             static_cast<unsigned>(hours),
+             static_cast<unsigned>(minutes),
+             static_cast<unsigned>(secs));
+  } else if (minutes > 0) {
+    snprintf(buffer,
+             sizeof(buffer),
+             "%um %02us",
+             static_cast<unsigned>(minutes),
+             static_cast<unsigned>(secs));
+  } else {
+    snprintf(buffer, sizeof(buffer), "%us", static_cast<unsigned>(secs));
+  }
+  return String(buffer);
+}
+
 String clockStateDetail(GpsClockState state) {
   switch (state) {
     case GPS_CLOCK_STATE_CONFIRMED_TIME:
@@ -906,10 +942,20 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
   }
 
   page += F("</div><div class=\"card\"><h2>Runtime Status</h2><div class=\"grid\">"
-            "<div class=\"item\"><span class=\"label\">Satellites</span><span class=\"value\">");
+            "<div class=\"item\"><span class=\"label\">PPS</span><span class=\"value\">");
+  if (status.ppsAligned && status.ppsPeriodValid) {
+    char ppsBuf[20];
+    snprintf(ppsBuf, sizeof(ppsBuf), "%.9f", status.ppsPeriodSeconds);
+    page += htmlEscape(String(ppsBuf));
+  } else {
+    page += F("No");
+    if (status.ppsLastSeenAgeValid) {
+      page += F(", LastSeen: ");
+      page += htmlEscape(formatElapsedCompact(status.ppsLastSeenAgeSeconds));
+    }
+  }
+  page += F("</span></div><div class=\"item\"><span class=\"label\">Satellites</span><span class=\"value\">");
   page += htmlEscape(satelliteCount);
-  page += F("</span></div><div class=\"item\"><span class=\"label\">PPS Seen Since Boot</span><span class=\"value\">");
-  page += htmlEscape(yesNoLabel(status.ppsSeenSinceBoot));
   page += F("</span></div><div class=\"item\"><span class=\"label\">GNSS Time (IST)</span><span class=\"value\">");
   page += htmlEscape(gpsTime);
   page += F("</span></div><div class=\"item\"><span class=\"label\">GNSS UTC Epoch <span class=\"unit\">(µs)</span></span><span class=\"value\">");
@@ -919,15 +965,7 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
   page += F("</span></div><div class=\"item\"><span class=\"label\">NTP Ready</span><span class=\"value\">");
   page += status.ntpReady ? F("Yes") : F("No");
   page += F("</span></div>"
-            "<div class=\"item\"><span class=\"label\">PPS</span><span class=\"value\">");
-  if (status.ppsAligned && status.ppsPeriodValid) {
-    char ppsBuf[20];
-    snprintf(ppsBuf, sizeof(ppsBuf), "%.9f", status.ppsPeriodSeconds);
-    page += htmlEscape(String(ppsBuf));
-  } else {
-    page += F("No");
-  }
-  page += F("</span></div><div class=\"item\"><span class=\"label\">COARSE Since Boot</span><span class=\"value\">");
+            "<div class=\"item\"><span class=\"label\">COARSE Since Boot</span><span class=\"value\">");
   page += htmlEscape(String(status.coarseEpochUseCount));
   page += F("</span></div><div class=\"item\"><span class=\"label\">correction <span class=\"unit\">(µs)</span></span><span class=\"value\">");
   page += htmlEscape(String(status.correctionUs));

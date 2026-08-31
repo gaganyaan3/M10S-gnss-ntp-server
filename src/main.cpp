@@ -59,6 +59,8 @@ OtaUpdate otaUpdate;
 unsigned long lastDisplayUpdateMs = 0;
 unsigned long lastGpsStatusLogMs = 0;
 unsigned long lastCpuTemperatureLogMs = 0;
+unsigned long lastPpsSeenMs = 0;
+bool lastPpsSeenMsValid = false;
 bool wasGpsValid = false;
 char apSsid[24] = "ESP-Setup";
 char otaHostname[32] = "esp32-m10s-gps";
@@ -120,7 +122,11 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
     statusOut.satelliteCount = gps.satelliteCount();
   }
 
-  statusOut.ppsSeenSinceBoot = ppsCapture.pulseCount() > 0;
+  statusOut.ppsLastSeenAgeValid = lastPpsSeenMsValid;
+  if (statusOut.ppsLastSeenAgeValid) {
+    statusOut.ppsLastSeenAgeSeconds =
+        static_cast<uint32_t>((millis() - lastPpsSeenMs) / 1000UL);
+  }
   statusOut.ppsAligned = gps.ppsRecentlySeen();
   statusOut.ppsPeriodValid = statusOut.ppsAligned && ppsCapture.lastPeriodValid();
   statusOut.ppsPeriodSeconds = ppsCapture.lastPeriodSeconds();
@@ -368,6 +374,8 @@ void processPpsCapture() {
   }
 
   gps.onPpsEdge(pulse.edgeTicks, pulse.elapsedPulses);
+  lastPpsSeenMs = millis();
+  lastPpsSeenMsValid = true;
   Serial.printf("PPS pulse #%lu %lu ticks | PPS: %llu us",
                 static_cast<unsigned long>(pulse.pulseCount),
                 static_cast<unsigned long>(pulse.edgeTicks),

@@ -210,7 +210,8 @@ GpsClockState GnssClock::clockState(const GpsDashboardStatus& status) const {
     return GPS_CLOCK_STATE_PPS_LOCKED;
   }
 
-  if (status.holdoverUtcValid &&
+  if (holdoverPpsDisciplined_ &&
+      status.holdoverUtcValid &&
       status.holdoverTimeoutValid &&
       !status.ppsAligned) {
     return GPS_CLOCK_STATE_HOLDOVER;
@@ -222,6 +223,12 @@ GpsClockState GnssClock::clockState(const GpsDashboardStatus& status) const {
 
   if (status.navPvtConfirmedTimeReady) {
     return GPS_CLOCK_STATE_CONFIRMED_TIME;
+  }
+
+  if (status.holdoverUtcValid &&
+      status.holdoverTimeoutValid &&
+      !status.ppsAligned) {
+    return GPS_CLOCK_STATE_HOLDOVER;
   }
 
   return GPS_CLOCK_STATE_UNSYNCED;

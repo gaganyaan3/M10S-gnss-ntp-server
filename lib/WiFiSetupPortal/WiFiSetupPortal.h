@@ -38,7 +38,8 @@ struct GpsDashboardStatus {
 
   bool satelliteCountValid = false;
   uint32_t satelliteCount = 0;
-  bool ppsSeenSinceBoot = false;
+  bool ppsLastSeenAgeValid = false;
+  uint32_t ppsLastSeenAgeSeconds = 0;
   bool ppsAligned = false;
   bool ppsPeriodValid = false;
   double ppsPeriodSeconds = 0.0;
