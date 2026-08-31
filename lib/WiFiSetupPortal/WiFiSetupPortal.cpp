@@ -132,11 +132,12 @@ String clockStateDetail(GpsClockState state) {
 }
 
 String holdoverCountdownLabel(uint32_t remainingSeconds) {
-  char buffer[8];
+  char buffer[12];
   snprintf(buffer,
            sizeof(buffer),
-           "%lu:%02lu",
-           static_cast<unsigned long>(remainingSeconds / 60UL),
+           "%02lu:%02lu:%02lu",
+           static_cast<unsigned long>(remainingSeconds / 3600UL),
+           static_cast<unsigned long>((remainingSeconds / 60UL) % 60UL),
            static_cast<unsigned long>(remainingSeconds % 60UL));
   return String(buffer);
 }
@@ -1037,9 +1038,10 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
             "var remaining=parseInt(countdown.dataset.remaining,10);"
             "function renderCountdown(){"
             "var clamped=Math.max(0,remaining);"
-            "var minutes=Math.floor(clamped/60);"
+            "var hours=Math.floor(clamped/3600);"
+            "var minutes=Math.floor(clamped/60)%60;"
             "var seconds=clamped%60;"
-            "countdown.textContent=minutes+':'+String(seconds).padStart(2,'0');"
+            "countdown.textContent=String(hours).padStart(2,'0')+':'+String(minutes).padStart(2,'0')+':'+String(seconds).padStart(2,'0');"
             "}"
             "renderCountdown();"
             "var timer=setInterval(function(){"
