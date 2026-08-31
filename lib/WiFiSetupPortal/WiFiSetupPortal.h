@@ -17,9 +17,8 @@ struct GpsDashboardSettings {
 enum GpsClockState : uint8_t {
   GPS_CLOCK_STATE_UNSYNCED = 0,
   GPS_CLOCK_STATE_CONFIRMED_TIME = 1,
-  GPS_CLOCK_STATE_ACQUIRED = 2,
-  GPS_CLOCK_STATE_PPS_LOCKED = 3,
-  GPS_CLOCK_STATE_HOLDOVER = 4,
+  GPS_CLOCK_STATE_PPS_LOCKED = 2,
+  GPS_CLOCK_STATE_HOLDOVER = 3,
 };
 
 struct GpsDashboardStatus {

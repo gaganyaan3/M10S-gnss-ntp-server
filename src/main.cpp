@@ -137,14 +137,18 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
     statusOut.navPvtConfirmedTimeEpochUtcMicros = epochUsUtc;
   }
 
-  statusOut.gpsTimeValid = gnssClock.navPvtCoarseEpochUs(epochUsUtc);
-  if (statusOut.gpsTimeValid) {
-    statusOut.gpsEpochUtcMicros = epochUsUtc;
-  }
-
   uint64_t ppsEpochNsUtc = 0;
   const bool ppsNtpReady =
       statusOut.ppsAligned && gps.currentUtcEpochNsPps(ppsEpochNsUtc);
+  statusOut.gpsTimeValid = false;
+  if (ppsNtpReady) {
+    statusOut.gpsTimeValid = true;
+    statusOut.gpsEpochUtcMicros = ppsEpochNsUtc / 1000ULL;
+  } else if (statusOut.navPvtConfirmedTimeReady) {
+    statusOut.gpsTimeValid = true;
+    statusOut.gpsEpochUtcMicros = statusOut.navPvtConfirmedTimeEpochUtcMicros;
+  }
+
   const GnssClockDiagnostics clockDiagnostics = gnssClock.diagnostics();
   statusOut.coarseEpochUseCount = clockDiagnostics.coarseEpochUseCount;
   statusOut.correctionUs = clockDiagnostics.coarseCorrectionLastAppliedUs;
@@ -157,7 +161,6 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
   }
   statusOut.ntpReady =
       ppsNtpReady ||
-      statusOut.gpsTimeValid ||
       statusOut.navPvtConfirmedTimeReady ||
       (settingsOut.ntpHoldoverEnabled &&
        clockDiagnostics.holdoverUtcValid &&
@@ -538,7 +541,7 @@ void setup() {
                 static_cast<unsigned long>(GNSS_BAUD_RATE));
 
   nmeaServer.begin();
-  Serial.printf("NMEA server listening on port %u\n", NmeaServer::DEFAULT_PORT);
+  Serial.printf("NMEA server port:  %u\n", NmeaServer::DEFAULT_PORT);
   Serial.printf("Setup hotspot SSID (if needed): %s\n", apSsid);
 
   ntpServer.setTimeProvider([](uint32_t& epochUtcOut, uint32_t& fractionOut) {
@@ -552,7 +555,7 @@ void setup() {
     return true;
   });
   ntpServer.begin();
-  Serial.printf("GNSS-backed NTP server listening on port %u\n", NtpServer::DEFAULT_PORT);
+  Serial.printf("GNSS-backed NTP port: %u\n", NtpServer::DEFAULT_PORT);
 }
 
 void loop() {

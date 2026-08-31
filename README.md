@@ -57,11 +57,11 @@ Quick check:
 ntpdate -q <device-ip>
 ```
 
-If no valid PPS, acquired GNSS time, NAV-PVT confirmed-time, or holdover time is
+If no valid PPS, NAV-PVT confirmed-time, or holdover time is
 available, the NTP server stays silent rather than replying with invalid
 timestamps.
 
-After the first valid PPS lock, acquired GNSS UTC time, or NAV-PVT confirmed-time,
+After the first valid PPS lock or NAV-PVT confirmed-time,
 optional holdover keeps NTP responses available if live PPS or satellite fix is
 temporarily lost.
 
@@ -77,22 +77,20 @@ The next PPS edge corresponds to UTC time N, plus valid qErr correction.
 
 Once that relationship is known, the PPS edge captured by MCPWM becomes the
 precision timing source. Between PPS edges, the server interpolates from the
-captured PPS tick using the same 80 MHz hardware counter. ACQUIRED remains the
-preferred NAV-PVT fallback when it is fullyResolved and gnssFixOK.
-ConfirmedTime is the quick fallback when NAV-PVT has validDate, validTime,
-fullyResolved, and confirmedTime.
+captured PPS tick using the same 80 MHz hardware counter. ConfirmedTime is the
+NAV-PVT fallback when NAV-PVT has validDate, validTime, fullyResolved, and
+confirmedTime.
 
 If PPS disappears, the server does not immediately switch to setting time from
 each NAV-PVT message. Holdover continues from the PPS-disciplined timestamp. In
-ACQUIRED or ConfirmedTime mode, the first valid NAV-PVT UTC time anchors holdover
-and starts that mode's shorter holdover timeout
-(`kAcquiredHoldoverTimeoutMs` or `kConfirmedTimeHoldoverTimeoutMs`). In either
-mode, after that timeout expires, the millisecond delta between NAV-PVT and
-holdover is checked. If the delta is greater than
-`kMaxAcquiredCoarseDeltaMs` and below 500 ms, holdover is nudged by 10% of that
-millisecond delta. Deltas of 500 ms or more are ignored as unstable samples. The
-`/gnss` dashboard shows the last applied correction in microseconds, and serial
-logs each skipped, ignored, or applied correction checkpoint.
+ConfirmedTime mode, the first valid NAV-PVT UTC time anchors holdover and starts
+the shorter holdover timeout (`kConfirmedTimeHoldoverTimeoutMs`). After that
+timeout expires, the millisecond delta between NAV-PVT and holdover is checked.
+If the delta is greater than `kMaxConfirmedTimeCoarseDeltaMs` and below
+`kMaxConfirmedTimeCoarseIgnoreDeltaMs`, holdover is nudged by 10% of that
+millisecond delta. Larger deltas are ignored as unstable samples. The `/gnss`
+dashboard shows the last applied correction in microseconds, and serial logs
+each skipped, ignored, or applied correction checkpoint.
 
 New time-query API added to `GnssMaxM10S`:
 
@@ -107,21 +105,20 @@ New time-query API added to `GnssMaxM10S`:
 
 `GnssClock::navPvtConfirmedTimeEpochUs(uint64_t&)` exposes the quick
 ConfirmedTime source used for NTP when NAV-PVT has validDate, validTime,
-fullyResolved, and confirmedTime, even before gnssFixOK promotes the clock to
-ACQUIRED.
+fullyResolved, and confirmedTime.
 
-NTP source priority is PPSLocked with PPS first, then ACQUIRED, then
-ConfirmedTime, then valid holdover.
+NTP source priority is PPSLocked with PPS first, then ConfirmedTime, then valid
+holdover.
 
 After a PPSLocked state has anchored holdover, losing PPS enters HOLDOVER and
 keeps serving from that PPS-disciplined timestamp for `kHoldoverTimeoutMs`.
-Live ACQUIRED or ConfirmedTime NAV-PVT data does not shorten that PPS holdover
-deadline; it is only used after PPS holdover expires or when no PPS-disciplined
-holdover exists.
+Live ConfirmedTime NAV-PVT data does not shorten that PPS holdover deadline; it
+is only used after PPS holdover expires or when no PPS-disciplined holdover
+exists.
 
-When ACQUIRED or ConfirmedTime is the active source without prior PPS lock,
-each fresh NAV-PVT sample re-anchors fallback holdover so the `/gnss` Holdover
-UTC value continues to move from the latest confirmed GNSS UTC.
+When ConfirmedTime is the active source without prior PPS lock, each fresh
+NAV-PVT sample re-anchors fallback holdover so the `/gnss` Holdover UTC value
+continues to move from the latest confirmed GNSS UTC.
 
 ## PPS pulse:
 
@@ -275,8 +272,6 @@ UNSYNCED
    ↓
 ConfirmedTime
    ↓
-ACQUIRED
-   ↓
 PPSLocked
    ↓
 HOLDOVER
@@ -287,11 +282,6 @@ No trustworthy UTC.
 ConfirmedTime
 NAV-PVT validDate, validTime, fullyResolved, and confirmedTime are set.
 NTP serves quick NAV-PVT time while waiting for a GNSS fix and PPS lock.
-
-ACQUIRED
-NAV-PVT UTC is valid with gnssFixOK.
-Waiting for valid TIM-TP + PPS.
-NTP serves from holdover anchored by acquired GNSS UTC.
 
 PPSLocked
 TIM-TP valid.

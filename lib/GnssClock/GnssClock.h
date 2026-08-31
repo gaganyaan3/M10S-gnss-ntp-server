@@ -31,10 +31,9 @@ class GnssClock {
 
  private:
   static constexpr uint32_t kHoldoverTimeoutMs = 1440UL * 60UL * 1000UL;
-  static constexpr uint32_t kAcquiredHoldoverTimeoutMs = 60UL * 1000UL; // Timeout holdover for Coarse Correction
   static constexpr uint32_t kConfirmedTimeHoldoverTimeoutMs = 60UL * 1000UL; // Timeout holdover for ConfirmedTime Coarse Correction
-  static constexpr int64_t kMaxAcquiredCoarseDeltaMs = 10; // Diff for Coarse Correction between holdover and NAV-PVT
-  static constexpr int64_t kMaxAcquiredCoarseIgnoreDeltaMs = 100;
+  static constexpr int64_t kMaxConfirmedTimeCoarseDeltaMs = 10; // Diff for Coarse Correction between holdover and NAV-PVT
+  static constexpr int64_t kMaxConfirmedTimeCoarseIgnoreDeltaMs = 100;
 
   uint64_t ppsTicksToUs(uint64_t ticks) const;
   void anchorHoldoverRawUs(uint64_t epochUsUtc);
@@ -62,6 +61,6 @@ class GnssClock {
   uint64_t holdoverBaseEpochUsUtc_ = 0;
   uint64_t holdoverBaseTicks_ = 0;
   bool holdoverDeadlineValid_ = false;
-  bool holdoverAcquiredTimeout_ = false;
+  bool holdoverNavPvtTimeoutStarted_ = false;
   uint32_t holdoverDeadlineMs_ = 0;
 };

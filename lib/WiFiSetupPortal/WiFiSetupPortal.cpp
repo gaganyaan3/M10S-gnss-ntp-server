@@ -33,8 +33,6 @@ String clockStateLabel(GpsClockState state) {
   switch (state) {
     case GPS_CLOCK_STATE_CONFIRMED_TIME:
       return F("ConfirmedTime");
-    case GPS_CLOCK_STATE_ACQUIRED:
-      return F("ACQUIRED");
     case GPS_CLOCK_STATE_PPS_LOCKED:
       return F("PPSLocked");
     case GPS_CLOCK_STATE_HOLDOVER:
@@ -123,8 +121,6 @@ String clockStateDetail(GpsClockState state) {
   switch (state) {
     case GPS_CLOCK_STATE_CONFIRMED_TIME:
       return F("NAV-PVT date/time is fully resolved and confirmed; serving quick NTP.");
-    case GPS_CLOCK_STATE_ACQUIRED:
-      return F("NAV-PVT UTC valid; waiting for valid TIM-TP + PPS.");
     case GPS_CLOCK_STATE_PPS_LOCKED:
       return F("TIM-TP valid, PPS valid, timer disciplined.");
     case GPS_CLOCK_STATE_HOLDOVER:
@@ -985,7 +981,7 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
     page += F(" checked");
   }
   page += F(">"
-            "<span><strong>NTP holdover after PPSLocked, ACQUIRED, or ConfirmedTime</strong><span>Keep answering from the last PPS-locked, acquired, or NAV-PVT confirmed-time UTC during short outages.</span></span></label>"
+            "<span><strong>NTP holdover after PPSLocked or ConfirmedTime</strong><span>Keep answering from the last PPS-locked or NAV-PVT confirmed-time UTC during short outages.</span></span></label>"
             "<label class=\"toggle\"><input type=\"checkbox\" name=\"enable_stats\""
   );
   if (settings.enableStats) {
@@ -1120,8 +1116,7 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
   page += F("</div></div><div class=\"item\"><span class=\"label\">Holdover timeout</span><span class=\"state-value\" id=\"holdover-countdown\"");
   const bool showHoldoverTimeout =
       (status.clockState == GPS_CLOCK_STATE_HOLDOVER ||
-       status.clockState == GPS_CLOCK_STATE_CONFIRMED_TIME ||
-       status.clockState == GPS_CLOCK_STATE_ACQUIRED) &&
+       status.clockState == GPS_CLOCK_STATE_CONFIRMED_TIME) &&
       status.holdoverTimeoutValid;
   if (showHoldoverTimeout) {
     page += F(" data-remaining=\"");
