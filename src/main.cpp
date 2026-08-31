@@ -147,8 +147,8 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
   }
 
   const GnssClockDiagnostics clockDiagnostics = gnssClock.diagnostics();
-  statusOut.coarseEpochUseCount = clockDiagnostics.coarseEpochUseCount;
-  statusOut.correctionUs = clockDiagnostics.coarseCorrectionLastAppliedUs;
+  statusOut.correctionUseCount = clockDiagnostics.correctionUseCount;
+  statusOut.correctionUs = clockDiagnostics.correctionLastAppliedUs;
   statusOut.holdoverUtcValid = clockDiagnostics.holdoverValid;
   if (statusOut.holdoverUtcValid) {
     statusOut.holdoverTimeoutValid = clockDiagnostics.holdoverTimeoutValid;

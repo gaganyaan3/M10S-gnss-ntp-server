@@ -153,18 +153,18 @@ String monRfAgcStatusLabel(const GpsDashboardStatus& status) {
   }
   const uint16_t agcCnt = status.agcCntAvg;
   if (agcCnt > 5000) {
-    return String(F("Disconnected-")) + String(agcCnt);
+    return String(F("Disconnected:")) + String(agcCnt);
   }
   if (agcCnt > 3000) {
-    return String(F("VLow-")) + String(agcCnt);
+    return String(F("VLow:")) + String(agcCnt);
   }
   if (agcCnt > 2000) {
-    return String(F("Low-")) + String(agcCnt);
+    return String(F("Low:")) + String(agcCnt);
   }
   if (agcCnt > 1000) {
-    return String(F("OK-")) + String(agcCnt);
+    return String(F("OK:")) + String(agcCnt);
   }
-  return String(F("Good-")) + String(agcCnt);
+  return String(F("Good:")) + String(agcCnt);
 }
 
 const char* constellationLabel(uint8_t constellation) {
@@ -965,9 +965,9 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
   page += F("</span></div><div class=\"item\"><span class=\"label\">NTP Ready</span><span class=\"value\">");
   page += status.ntpReady ? F("Yes") : F("No");
   page += F("</span></div>"
-            "<div class=\"item\"><span class=\"label\">COARSE Since Boot</span><span class=\"value\">");
-  page += htmlEscape(String(status.coarseEpochUseCount));
-  page += F("</span></div><div class=\"item\"><span class=\"label\">correction <span class=\"unit\">(µs)</span></span><span class=\"value\">");
+            "<div class=\"item\"><span class=\"label\">CORRECTION Since Boot</span><span class=\"value\">");
+  page += htmlEscape(String(status.correctionUseCount));
+  page += F("</span></div><div class=\"item\"><span class=\"label\">Last Correction <span class=\"unit\">(µs)</span></span><span class=\"value\">");
   page += htmlEscape(String(status.correctionUs));
   page += F("</span></div><div class=\"item\"><span class=\"label\">ANTStatus-agcCnt</span><span class=\"value\">");
   page += htmlEscape(monRfAgcStatusLabel(status));
@@ -1282,15 +1282,16 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
             "if(countdown&&countdown.dataset.remaining){"
             "var remaining=parseInt(countdown.dataset.remaining,10);"
             "function renderCountdown(){"
-            "var minutes=Math.floor(remaining/60);"
-            "var seconds=remaining%60;"
+            "var clamped=Math.max(0,remaining);"
+            "var minutes=Math.floor(clamped/60);"
+            "var seconds=clamped%60;"
             "countdown.textContent=minutes+':'+String(seconds).padStart(2,'0');"
             "}"
             "renderCountdown();"
-            "setInterval(function(){"
+            "var timer=setInterval(function(){"
             "remaining-=1;"
             "renderCountdown();"
-            "if(remaining<=0){window.location.reload();return;}"
+            "if(remaining<=0){clearInterval(timer);setTimeout(function(){window.location.reload();},1000);return;}"
             "},1000);"
             "}"
             "})();</script>");

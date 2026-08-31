@@ -98,10 +98,10 @@ bool GnssClock::currentNtpEpochUs(uint64_t& epochUsUtcOut) {
     }
 
     epochUsUtcOut = holdoverEpochUsUtc;
-    if (updateCoarseCorrection(holdoverEpochUsUtc,
-                               confirmedTimeEpochUsUtc,
-                               navPvtFallbackLabel,
-                               epochUsUtcOut)) {
+    if (updateCorrection(holdoverEpochUsUtc,
+                         confirmedTimeEpochUsUtc,
+                         navPvtFallbackLabel,
+                         epochUsUtcOut)) {
       restartNavPvtHoldoverTimeout(kConfirmedTimeHoldoverTimeoutMs);
       return true;
     }
@@ -170,8 +170,8 @@ bool GnssClock::holdoverRemainingSeconds(uint32_t& remainingSecondsOut) {
 
 GnssClockDiagnostics GnssClock::diagnostics() {
   GnssClockDiagnostics out;
-  out.coarseEpochUseCount = coarseEpochUseCount_;
-  out.coarseCorrectionLastAppliedUs = coarseCorrectionLastAppliedUs_;
+  out.correctionUseCount = correctionUseCount_;
+  out.correctionLastAppliedUs = correctionLastAppliedUs_;
   out.holdoverValid = holdoverValid_;
   if (out.holdoverValid) {
     out.holdoverTimeoutValid = holdoverRemainingSeconds(out.holdoverRemainingSeconds);
@@ -246,33 +246,33 @@ void GnssClock::restartNavPvtHoldoverTimeout(uint32_t timeoutMs) {
   holdoverNavPvtTimeoutStarted_ = true;
 }
 
-bool GnssClock::updateCoarseCorrection(uint64_t referenceEpochUsUtc,
-                                       uint64_t navPvtEpochUsUtc,
-                                       const char* sourceLabel,
-                                       uint64_t& epochUsUtcInOut) {
+bool GnssClock::updateCorrection(uint64_t referenceEpochUsUtc,
+                                 uint64_t navPvtEpochUsUtc,
+                                 const char* sourceLabel,
+                                 uint64_t& epochUsUtcInOut) {
   const int64_t deltaMs = static_cast<int64_t>(navPvtEpochUsUtc / 1000ULL) -
                           static_cast<int64_t>(referenceEpochUsUtc / 1000ULL);
   const int64_t absDeltaMs = abs64(deltaMs);
-  if (absDeltaMs >= kMaxConfirmedTimeCoarseIgnoreDeltaMs) {
-    Serial.printf("%s coarse correction ignored | deltaMs=%lld thresholdMs=%lld ignoreAtMs=%lld\n",
+  if (absDeltaMs >= kMaxConfirmedTimeCorrectionIgnoreDeltaMs) {
+    Serial.printf("%s correction ignored | deltaMs=%lld thresholdMs=%lld ignoreAtMs=%lld\n",
                   sourceLabel,
                   static_cast<long long>(deltaMs),
-                  static_cast<long long>(kMaxConfirmedTimeCoarseDeltaMs),
-                  static_cast<long long>(kMaxConfirmedTimeCoarseIgnoreDeltaMs));
+                  static_cast<long long>(kMaxConfirmedTimeCorrectionDeltaMs),
+                  static_cast<long long>(kMaxConfirmedTimeCorrectionIgnoreDeltaMs));
     return true;
   }
 
-  if (absDeltaMs <= kMaxConfirmedTimeCoarseDeltaMs) {
-    Serial.printf("%s coarse correction skipped | deltaMs=%lld thresholdMs=%lld\n",
+  if (absDeltaMs <= kMaxConfirmedTimeCorrectionDeltaMs) {
+    Serial.printf("%s correction skipped | deltaMs=%lld thresholdMs=%lld\n",
                   sourceLabel,
                   static_cast<long long>(deltaMs),
-                  static_cast<long long>(kMaxConfirmedTimeCoarseDeltaMs));
+                  static_cast<long long>(kMaxConfirmedTimeCorrectionDeltaMs));
     return true;
   }
 
   const int32_t correctionUs = static_cast<int32_t>(deltaMs * 100LL);
   const int64_t correctionSubMsUs = abs64(correctionUs) % 1000LL;
-  coarseCorrectionLastAppliedUs_ = correctionUs;
+  correctionLastAppliedUs_ = correctionUs;
 
   uint64_t currentHoldoverUsValue = 0;
   if (!currentHoldoverUs(currentHoldoverUsValue)) {
@@ -287,9 +287,9 @@ bool GnssClock::updateCoarseCorrection(uint64_t referenceEpochUsUtc,
 
   holdoverCorrectionOffsetUs_ += correctionUs;
   epochUsUtcInOut = static_cast<uint64_t>(correctedHoldoverUs);
-  ++coarseEpochUseCount_;
+  ++correctionUseCount_;
   anchorHoldoverRawUs(static_cast<uint64_t>(correctedHoldoverUs));
-  Serial.printf("%s coarse correction applied | deltaMs=%lld correction=%s%ld.%03lldms \n",
+  Serial.printf("%s correction applied | deltaMs=%lld correction=%s%ld.%03lldms \n",
                 sourceLabel,
                 static_cast<long long>(deltaMs),
                 correctionUs < 0 ? "-" : "",
