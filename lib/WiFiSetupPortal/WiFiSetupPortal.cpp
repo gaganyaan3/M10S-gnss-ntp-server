@@ -871,7 +871,11 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
   String gpsTime = F("Unavailable");
   String gpsUtcEpoch = F("Unavailable");
   String holdoverUtcEpoch = F("Unavailable");
-  if (status.gpsTimeValid) {
+  const bool gpsEpochAvailable =
+      status.gpsEpochUtcMicros > 0 &&
+      (status.clockState == GPS_CLOCK_STATE_PPS_LOCKED ||
+       status.clockState == GPS_CLOCK_STATE_CONFIRMED_TIME);
+  if (gpsEpochAvailable) {
     gpsTime = formatIstFromEpoch(static_cast<uint32_t>(status.gpsEpochUtcMicros / 1000000ULL));
     gpsUtcEpoch = formatEpochMicros(status.gpsEpochUtcMicros);
   }

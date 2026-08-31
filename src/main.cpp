@@ -140,12 +140,9 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
   uint64_t ppsEpochNsUtc = 0;
   const bool ppsNtpReady =
       statusOut.ppsAligned && gps.currentUtcEpochNsPps(ppsEpochNsUtc);
-  statusOut.gpsTimeValid = false;
   if (ppsNtpReady) {
-    statusOut.gpsTimeValid = true;
     statusOut.gpsEpochUtcMicros = ppsEpochNsUtc / 1000ULL;
   } else if (statusOut.navPvtConfirmedTimeReady) {
-    statusOut.gpsTimeValid = true;
     statusOut.gpsEpochUtcMicros = statusOut.navPvtConfirmedTimeEpochUtcMicros;
   }
 
@@ -435,13 +432,13 @@ void updateDisplay(uint32_t nowMs) {
   }
 
   if (gpsStamp.valid) {
-    const bool gpsTimeValid =
+    const bool gpsTimeFormatted =
         OledClockDisplay::formatIstTimeOnlyFromEpoch(gpsStamp.epochUtc, gpsTimeLine, sizeof(gpsTimeLine)) &&
         OledClockDisplay::isPrintableText(gpsTimeLine);
     const bool gpsDateValid =
         OledClockDisplay::formatIstDateOnlyFromEpoch(gpsStamp.epochUtc, gpsDateLine, sizeof(gpsDateLine)) &&
         OledClockDisplay::isPrintableText(gpsDateLine);
-    if (!gpsTimeValid) {
+    if (!gpsTimeFormatted) {
       snprintf(gpsTimeLine, sizeof(gpsTimeLine), "No GNSS");
     }
     if (!gpsDateValid) {

@@ -47,7 +47,6 @@ struct GpsDashboardStatus {
   uint32_t holdoverRemainingSeconds = 0;
   bool navPvtConfirmedTimeReady = false;
   uint64_t navPvtConfirmedTimeEpochUtcMicros = 0;
-  bool gpsTimeValid = false;
   uint64_t gpsEpochUtcMicros = 0;
   uint32_t coarseEpochUseCount = 0;
   int32_t correctionUs = 0;
