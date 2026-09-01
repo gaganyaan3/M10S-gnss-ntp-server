@@ -563,19 +563,39 @@ void WiFiSetupPortal::handleConnect() {
 
   String page = F("<!DOCTYPE html><html><head>"
                   "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-                  "<meta charset=\"UTF-8\"><title>Connecting...</title></head><body>"
-                  "<h2>Connecting to Wi-Fi&hellip;</h2>"
-                  "<p>Please wait while the device tries to connect.</p>"
-                  "<p><strong>SSID:</strong> ");
+                  "<meta charset=\"UTF-8\"><title>Connecting...</title>"
+                  "<style>"
+                  "*{box-sizing:border-box;margin:0;padding:0}"
+                  "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;"
+                    "background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);color:#fff;padding:20px;"
+                    "display:flex;align-items:center;justify-content:center}"
+                  ".wrap{width:100%;max-width:520px;margin:0 auto;display:grid;gap:18px}"
+                  ".card{background:rgba(255,255,255,0.08);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);"
+                    "border:1px solid rgba(255,255,255,0.18);border-radius:18px;padding:24px;box-shadow:0 10px 30px rgba(0,0,0,0.28)}"
+                  ".icon{font-size:40px;text-align:center;margin-bottom:10px}"
+                  "h1{font-size:28px;text-align:center;margin-bottom:8px}"
+                  "p.lead{color:rgba(255,255,255,0.72);font-size:15px;line-height:1.4;text-align:center;margin-bottom:18px}"
+                  ".item{background:rgba(255,255,255,0.05);border-radius:12px;padding:14px}"
+                  ".label{display:block;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.56);margin-bottom:6px}"
+                  ".value{font-size:18px;font-weight:700;word-break:break-word}"
+                  ".bar{height:6px;background:rgba(255,255,255,0.12);border-radius:999px;overflow:hidden;margin-top:18px}"
+                  ".bar span{display:block;width:42%;height:100%;border-radius:999px;background:linear-gradient(90deg,#0d6efd,#20c997);animation:pulse 1.2s ease-in-out infinite alternate}"
+                  "@keyframes pulse{from{transform:translateX(-20%)}to{transform:translateX(160%)}}"
+                  "</style></head><body><div class=\"wrap\"><div class=\"card\">"
+                  "<div class=\"icon\">&#x1F4F6;</div>"
+                  "<h1>Connecting to Wi-Fi&hellip;</h1>"
+                  "<p class=\"lead\">Please wait while the device tries to connect.</p>"
+                  "<div class=\"item\"><span class=\"label\">SSID</span><span class=\"value\">");
   page += safeSsid;
-  page += F("</p><form id=\"cf\" action=\"/connect-now\" method=\"POST\">"
+  page += F("</span></div><div class=\"bar\"><span></span></div>"
+            "<form id=\"cf\" action=\"/connect-now\" method=\"POST\">"
             "<input type=\"hidden\" name=\"ssid\" value=\"");
   page += safeSsid;
   page += F("\"><input type=\"hidden\" name=\"pass\" value=\"");
   page += safePassword;
   page += F("\"></form>"
             "<script>setTimeout(function(){document.getElementById('cf').submit();},150);</script>"
-            "</body></html>");
+            "</div></div></body></html>");
   server_.send(200, "text/html", page);
 }
 
@@ -616,6 +636,10 @@ void WiFiSetupPortal::handleConnectNow() {
   } else if (status == WL_CONNECTION_LOST) {
     reason = "lost";
   }
+  WiFi.disconnect(false);
+  if (active_) {
+    WiFi.mode(WIFI_AP_STA);
+  }
   server_.sendHeader("Location", String("/connect-failed?r=") + reason, true);
   server_.send(302, "text/plain", "");
 }
@@ -642,41 +666,49 @@ void WiFiSetupPortal::handleConnectSuccess() {
                   "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
                   "<meta charset=\"UTF-8\"><title>Connected</title>"
                   "<style>"
-                  "body{font-family:sans-serif;max-width:500px;margin:32px auto;padding:0 16px}"
-                  "h2{color:#198754}h3{margin:20px 0 4px}"
-                  "code{display:block;background:#f4f4f4;border:1px solid #ddd;"
-                  "padding:8px 10px;border-radius:4px;font-size:14px;"
-                  "word-break:break-all;user-select:all}"
-                  "#bar{height:6px;background:#198754;border-radius:3px;"
-                  "transition:width 1s linear;width:100%}"
-                  "#msg{font-size:13px;color:#666;margin-top:6px}"
-                  "</style></head><body>"
-                  "<h2>&#10003; Connected to Wi-Fi!</h2>"
-                  "<p><strong>Network:</strong> ");
+                  "*{box-sizing:border-box;margin:0;padding:0}"
+                  "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;"
+                    "background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);color:#fff;padding:20px}"
+                  ".wrap{max-width:760px;margin:0 auto;display:grid;gap:18px}"
+                  ".card{background:rgba(255,255,255,0.08);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);"
+                    "border:1px solid rgba(255,255,255,0.18);border-radius:18px;padding:24px;box-shadow:0 10px 30px rgba(0,0,0,0.28)}"
+                  "h1{font-size:28px;margin-bottom:8px}"
+                  "h2{font-size:18px;margin-bottom:14px}"
+                  "p.lead{color:rgba(255,255,255,0.72);line-height:1.4}"
+                  ".banner{margin-top:14px;background:rgba(25,135,84,0.18);border:1px solid rgba(25,135,84,0.55);"
+                    "color:#bbf7d0;border-radius:12px;padding:12px 14px}"
+                  ".grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}"
+                  ".item{background:rgba(255,255,255,0.05);border-radius:12px;padding:14px}"
+                  ".label{display:block;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.56);margin-bottom:6px}"
+                  ".value{font-size:18px;font-weight:700;word-break:break-word}"
+                  "code{display:block;color:#fff;font-size:15px;font-weight:700;word-break:break-all;user-select:all}"
+                  "#bar{height:6px;background:linear-gradient(90deg,#0d6efd,#20c997);border-radius:999px;transition:width 1s linear;width:100%;margin-top:14px}"
+                  "#msg{font-size:14px;color:rgba(255,255,255,0.72);margin-top:8px}"
+                  "</style></head><body><div class=\"wrap\">"
+                  "<div class=\"card\"><h1>&#10003; Connected to Wi-Fi!</h1>"
+                  "<p class=\"lead\">Credentials saved and network services are ready.</p>"
+                  "<div class=\"banner\">Hotspot shuts down in <strong><span id='cd'>30</span>s</strong>.</div></div>"
+                  "<div class=\"card\"><h2>Network</h2><div class=\"grid\">"
+                  "<div class=\"item\"><span class=\"label\">Network</span><span class=\"value\">");
   page += safeSsid;
-  page += F("</p><p><strong>IP Address:</strong> ");
+  page += F("</span></div><div class=\"item\"><span class=\"label\">IP Address</span><span class=\"value\">");
   page += safeIp;
-  page += F("</p>"
-            "<h3>GNSS Time (quick check)</h3>"
-            "<code>");
+  page += F("</span></div></div></div>"
+            "<div class=\"card\"><h2>Service Links</h2><div class=\"grid\">"
+            "<div class=\"item\"><span class=\"label\">GNSS Time quick check</span><code>");
   page += htmlEscape(ntpCmd);
-  page += F("</code>"
-            "<h3>NMEA Stream &mdash; OpenCPN / GNSSd</h3>"
-            "<code>");
+  page += F("</code></div>"
+            "<div class=\"item\"><span class=\"label\">NMEA Stream &mdash; OpenCPN / GNSSd</span><code>");
   page += htmlEscape(nmeaUrl);
-  page += F("</code>"
-            "<h3>NTP Server</h3>"
-            "<code>");
+  page += F("</code></div>"
+            "<div class=\"item\"><span class=\"label\">NTP Server</span><code>");
   page += htmlEscape(ntpAddr);
-  page += F("</code>"
-            "<h3>GNSS Config Dashboard</h3>"
-            "<code>");
+  page += F("</code></div>"
+            "<div class=\"item\"><span class=\"label\">GNSS Config Dashboard</span><code>");
   page += htmlEscape(gpsUrl);
-  page += F("</code>"
-            "<p style=\"margin-top:24px\">Credentials saved. "
-            "Hotspot shuts down in <strong><span id='cd'>30</span>s</strong>.</p>"
+  page += F("</code></div></div>"
             "<div id='bar'></div>"
-            "<p id='msg'>Keep this page open &mdash; tap any code block to copy.</p>"
+            "<p id='msg'>Keep this page open &mdash; tap any code block to copy.</p></div>"
             "<script>"
             "var s=30;"
             "document.getElementById('bar').style.width='100%';"
@@ -688,7 +720,7 @@ void WiFiSetupPortal::handleConnectSuccess() {
             "document.getElementById('bar').style.width='0';}"
             "},1000);"
             "</script>"
-            "</body></html>");
+            "</div></body></html>");
   server_.send(200, "text/html", page);
 
   // Keep the hotspot running for 30 s so the page stays visible on mobile.
@@ -698,21 +730,37 @@ void WiFiSetupPortal::handleConnectSuccess() {
 void WiFiSetupPortal::handleConnectFailed() {
   String page = F("<!DOCTYPE html><html><head>"
                   "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-                  "<meta charset=\"UTF-8\"><title>Connection Failed</title></head><body>"
-                  "<h2>Wi-Fi connection failed</h2>");
+                  "<meta charset=\"UTF-8\"><title>Connection Failed</title>"
+                  "<style>"
+                  "*{box-sizing:border-box;margin:0;padding:0}"
+                  "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;"
+                    "background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);color:#fff;padding:20px;"
+                    "display:flex;align-items:center;justify-content:center}"
+                  ".wrap{width:100%;max-width:520px;margin:0 auto;display:grid;gap:18px}"
+                  ".card{background:rgba(255,255,255,0.08);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);"
+                    "border:1px solid rgba(255,255,255,0.18);border-radius:18px;padding:24px;box-shadow:0 10px 30px rgba(0,0,0,0.28)}"
+                  "h1{font-size:28px;margin-bottom:8px}"
+                  "p.lead{color:rgba(255,255,255,0.72);line-height:1.4;margin-bottom:14px}"
+                  ".banner{background:rgba(220,53,69,0.16);border:1px solid rgba(220,53,69,0.55);"
+                    "color:#fecdd3;border-radius:12px;padding:12px 14px;margin-bottom:14px}"
+                  "a.action{display:inline-block;width:100%;padding:13px 16px;font-size:16px;font-weight:700;text-align:center;"
+                    "text-decoration:none;color:#fff;border-radius:10px;background:linear-gradient(90deg,#0d6efd,#20c997);"
+                    "box-shadow:0 4px 14px rgba(13,110,253,0.35)}"
+                  "</style></head><body><div class=\"wrap\"><div class=\"card\">"
+                  "<h1>Wi-Fi connection failed</h1>");
 
   const String reason = server_.arg("r");
   if (reason == "auth") {
-    page += F("<p>Reason: authentication failed (wrong password).</p>");
+    page += F("<div class=\"banner\">Reason: authentication failed (wrong password).</div>");
   } else if (reason == "no_ssid") {
-    page += F("<p>Reason: SSID not found.</p>");
+    page += F("<div class=\"banner\">Reason: SSID not found.</div>");
   } else if (reason == "lost") {
-    page += F("<p>Reason: connection lost.</p>");
+    page += F("<div class=\"banner\">Reason: connection lost.</div>");
   } else {
-    page += F("<p>Reason: timeout or unknown error.</p>");
+    page += F("<div class=\"banner\">Reason: timeout or unknown error.</div>");
   }
-  page += F("<p>Please check your credentials and try again.</p>"
-            "<p><a href=\"/\">Back</a></p></body></html>");
+  page += F("<p class=\"lead\">Please check your credentials and try again.</p>"
+            "<a class=\"action\" href=\"/\">Back</a></div></div></body></html>");
   server_.send(200, "text/html", page);
 }
 
@@ -792,6 +840,7 @@ void WiFiSetupPortal::handleNotFound() {
 // ---- HTML -----------------------------------------------------------------
 
 String WiFiSetupPortal::htmlPage() const {
+  const String networkOptions = wifiNetworkOptionsHtml();
   String page = F("<!DOCTYPE html><html><head>"
                   "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
                   "<meta charset=\"UTF-8\"><title>Wi-Fi Setup</title>"
@@ -801,60 +850,78 @@ String WiFiSetupPortal::htmlPage() const {
                     "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
                     "min-height:100vh;"
                     "background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);"
-                    "display:flex;align-items:center;justify-content:center;padding:16px}"
+                    "color:#fff;padding:20px;display:flex;align-items:center;justify-content:center}"
+                  ".wrap{width:100%;max-width:420px;margin:0 auto;display:grid;gap:18px}"
                   ".card{"
-                    "background:rgba(255,255,255,0.07);"
+                    "background:rgba(255,255,255,0.08);"
                     "backdrop-filter:blur(12px);"
                     "-webkit-backdrop-filter:blur(12px);"
                     "border:1px solid rgba(255,255,255,0.18);"
-                    "border-radius:16px;"
-                    "padding:32px 28px;"
-                    "width:100%;max-width:380px;"
-                    "box-shadow:0 8px 32px rgba(0,0,0,0.4)"
+                    "border-radius:18px;"
+                    "padding:24px;"
+                    "box-shadow:0 10px 30px rgba(0,0,0,0.28)"
                   "}"
-                  ".icon{font-size:40px;text-align:center;margin-bottom:8px}"
-                  "h2{color:#fff;font-size:22px;font-weight:700;text-align:center;margin-bottom:6px}"
-                  "p{color:rgba(255,255,255,0.6);font-size:14px;text-align:center;margin-bottom:24px}"
+                  ".icon{font-size:40px;text-align:center;margin-bottom:10px}"
+                  "h1{font-size:28px;font-weight:800;text-align:center;margin-bottom:8px}"
+                  "p.lead{color:rgba(255,255,255,0.72);font-size:15px;line-height:1.4;text-align:center;margin-bottom:22px}"
+                  "form{display:grid;gap:14px}"
                   "label{"
                     "display:block;color:rgba(255,255,255,0.8);"
-                    "font-size:13px;font-weight:600;letter-spacing:.5px;"
-                    "text-transform:uppercase;margin-bottom:16px"
+                    "font-size:12px;font-weight:700;letter-spacing:.08em;"
+                    "text-transform:uppercase"
                   "}"
                   "input{"
                     "display:block;width:100%;margin-top:6px;"
                     "padding:11px 14px;font-size:15px;"
-                    "background:rgba(255,255,255,0.1);"
+                    "background:rgba(255,255,255,0.05);"
                     "border:1px solid rgba(255,255,255,0.25);"
-                    "border-radius:8px;color:#fff;outline:none;"
+                    "border-radius:10px;color:#fff;outline:none;"
                     "transition:border-color .2s,background .2s"
                   "}"
                   "input:focus{"
                     "border-color:#4fc3f7;"
-                    "background:rgba(255,255,255,0.15)"
+                    "background:rgba(255,255,255,0.08)"
                   "}"
                   "input::placeholder{color:rgba(255,255,255,0.35)}"
+                  "select{"
+                    "display:block;width:100%;margin-top:6px;"
+                    "padding:11px 14px;font-size:15px;"
+                    "background:rgba(255,255,255,0.05);"
+                    "border:1px solid rgba(255,255,255,0.25);"
+                    "border-radius:10px;color:#fff;outline:none;"
+                    "transition:border-color .2s,background .2s"
+                  "}"
+                  "select:focus{"
+                    "border-color:#4fc3f7;"
+                    "background:rgba(255,255,255,0.08)"
+                  "}"
+                  "option{color:#111;background:#fff}"
                   "button{"
-                    "width:100%;margin-top:8px;padding:13px;"
-                    "font-size:16px;font-weight:700;letter-spacing:.3px;"
-                    "color:#fff;border:none;border-radius:8px;cursor:pointer;"
-                    "background:linear-gradient(90deg,#0d6efd,#6610f2);"
-                    "box-shadow:0 4px 14px rgba(13,110,253,0.45);"
+                    "width:100%;padding:13px 16px;"
+                    "font-size:16px;font-weight:700;"
+                    "color:#fff;border:none;border-radius:10px;cursor:pointer;"
+                    "background:linear-gradient(90deg,#0d6efd,#20c997);"
+                    "box-shadow:0 4px 14px rgba(13,110,253,0.35);"
                     "transition:opacity .2s,transform .1s"
                   "}"
                   "button:active{opacity:.85;transform:scale(.98)}"
-                  ".ssid-name{"
-                    "color:#fff;font-size:11px;font-weight:400;"
-                    "text-align:right;margin-top:4px;opacity:.5"
+                  ".refresh{"
+                    "display:inline-block;width:100%;padding:10px 14px;"
+                    "font-size:14px;font-weight:700;text-align:center;text-decoration:none;color:#fff;"
+                    "border-radius:10px;background:linear-gradient(90deg,#0d6efd,#20c997);"
+                    "box-shadow:0 4px 14px rgba(13,110,253,0.35);margin-top:14px"
                   "}"
                   "</style></head><body>"
+                  "<div class=\"wrap\">"
                   "<div class=\"card\">"
                   "<div class=\"icon\">&#x1F4F6;</div>"
-                  "<h2>Wi-Fi Setup</h2>"
-                  "<p>Connect this device to your home network.</p>"
+                  "<h1>Wi-Fi Setup</h1>"
+                  "<p class=\"lead\">Connect this device to your home network.</p>"
                   "<form action=\"/connect\" method=\"POST\">"
                   "<label>Network (SSID)"
-                    "<input type=\"text\" name=\"ssid\" placeholder=\"e.g. MyHomeWiFi\""
-                    " autocomplete=\"off\" required>"
+                    "<select name=\"ssid\" required>");
+  page += networkOptions;
+  page += F("</select>"
                   "</label>"
                   "<label>Password"
                     "<input type=\"password\" name=\"pass\" placeholder=\"Wi-Fi password\""
@@ -862,9 +929,65 @@ String WiFiSetupPortal::htmlPage() const {
                   "</label>"
                   "<button type=\"submit\">Connect &#x2192;</button>"
                   "</form>"
+                  "<a class=\"refresh\" href=\"/\">Scan again</a>"
+                  "</div>"
                   "</div>"
                   "</body></html>");
   return page;
+}
+
+String WiFiSetupPortal::wifiNetworkOptionsHtml() const {
+  int networkCount = WiFi.scanNetworks(false, false);
+
+  if (networkCount < 0) {
+    WiFi.scanDelete();
+    WiFi.disconnect(false);
+    if (active_) {
+      WiFi.mode(WIFI_AP_STA);
+    }
+    delay(100);
+    networkCount = WiFi.scanNetworks(false, false);
+  }
+
+  if (networkCount <= 0) {
+    WiFi.scanDelete();
+    if (networkCount == 0) {
+      return F("<option value=\"\" disabled selected>No nearby networks found</option>");
+    }
+    return F("<option value=\"\" disabled selected>Wi-Fi scan failed</option>");
+  }
+
+  String options = F("<option value=\"\" disabled selected>Select a nearby network</option>");
+  for (int i = 0; i < networkCount; ++i) {
+    const String ssid = WiFi.SSID(i);
+    if (ssid.isEmpty()) {
+      continue;
+    }
+
+    bool alreadyAdded = false;
+    for (int j = 0; j < i; ++j) {
+      if (WiFi.SSID(j) == ssid) {
+        alreadyAdded = true;
+        break;
+      }
+    }
+    if (alreadyAdded) {
+      continue;
+    }
+
+    const String safeSsid = htmlEscape(ssid);
+    options += F("<option value=\"");
+    options += safeSsid;
+    options += F("\">");
+    options += safeSsid;
+    options += F(" (");
+    options += String(WiFi.RSSI(i));
+    options += F(" dBm)");
+    options += F("</option>");
+  }
+
+  WiFi.scanDelete();
+  return options;
 }
 
 String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,

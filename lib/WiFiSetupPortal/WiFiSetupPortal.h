@@ -191,6 +191,7 @@ class WiFiSetupPortal {
   bool connectToWiFi(const String& ssid, const String& password, const char* source = nullptr);
   void stopAccessPoint();
   String htmlPage() const;
+  String wifiNetworkOptionsHtml() const;
   String gpsDashboardPage(const GpsDashboardSettings& settings, const GpsDashboardStatus& status) const;
   String statsPage(const GpsDashboardStatus& status) const;
 
