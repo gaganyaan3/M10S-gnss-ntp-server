@@ -45,7 +45,7 @@ bool GnssClock::navPvtConfirmedTimeEpochUs(uint64_t& epochUsUtcOut, uint32_t* re
   return true;
 }
 
-bool GnssClock::currentNtpEpochUs(uint64_t& epochUsUtcOut) {
+bool GnssClock::currentPpsLockedEpochUs(uint64_t& epochUsUtcOut) {
   uint64_t epochNsUtc = 0;
   if (gps_.currentUtcEpochNsPps(epochNsUtc) && gps_.ppsRecentlySeen()) {
     epochUsUtcOut = epochNsUtc / 1000ULL;
@@ -54,6 +54,14 @@ bool GnssClock::currentNtpEpochUs(uint64_t& epochUsUtcOut) {
     holdoverPpsDisciplined_ = true;
     holdoverNavPvtReceivedUsValid_ = false;
     anchorHoldoverUs(epochUsUtcOut);
+    return true;
+  }
+
+  return false;
+}
+
+bool GnssClock::currentNtpEpochUs(uint64_t& epochUsUtcOut) {
+  if (currentPpsLockedEpochUs(epochUsUtcOut)) {
     return true;
   }
 

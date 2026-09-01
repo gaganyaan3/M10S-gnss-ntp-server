@@ -22,6 +22,7 @@ class GnssClock {
   void setHoldoverEnabled(bool enabled);
   bool navPvtConfirmedTimeEpochUs(uint64_t& epochUsUtcOut, uint32_t* receivedUsOut = nullptr);
   bool navPvtCoarseEpochUs(uint64_t& epochUsUtcOut, uint32_t* receivedUsOut = nullptr);
+  bool currentPpsLockedEpochUs(uint64_t& epochUsUtcOut);
   bool currentNtpEpochUs(uint64_t& epochUsUtcOut);
   bool currentNtpEpochMs(uint64_t& epochMsUtcOut);
   bool currentHoldoverUs(uint64_t& epochUsUtcOut);

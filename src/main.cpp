@@ -131,18 +131,19 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
   statusOut.ppsPeriodValid = statusOut.ppsAligned && ppsCapture.lastPeriodValid();
   statusOut.ppsPeriodSeconds = ppsCapture.lastPeriodSeconds();
 
+  uint64_t ppsEpochUsUtc = 0;
+  const bool ppsNtpReady = gnssClock.currentPpsLockedEpochUs(ppsEpochUsUtc);
+  if (ppsNtpReady) {
+    statusOut.gpsEpochUtcMicros = ppsEpochUsUtc;
+  }
+
   uint64_t epochUsUtc = 0;
   statusOut.navPvtConfirmedTimeReady = gnssClock.navPvtConfirmedTimeEpochUs(epochUsUtc);
   if (statusOut.navPvtConfirmedTimeReady) {
     statusOut.navPvtConfirmedTimeEpochUtcMicros = epochUsUtc;
   }
 
-  uint64_t ppsEpochNsUtc = 0;
-  const bool ppsNtpReady =
-      statusOut.ppsAligned && gps.currentUtcEpochNsPps(ppsEpochNsUtc);
-  if (ppsNtpReady) {
-    statusOut.gpsEpochUtcMicros = ppsEpochNsUtc / 1000ULL;
-  } else if (statusOut.navPvtConfirmedTimeReady) {
+  if (!ppsNtpReady && statusOut.navPvtConfirmedTimeReady) {
     statusOut.gpsEpochUtcMicros = statusOut.navPvtConfirmedTimeEpochUtcMicros;
   }
 
@@ -307,7 +308,7 @@ void logCpuTemperature(uint32_t nowMs) {
   }
 
   lastCpuTemperatureLogMs = nowMs;
-  Serial.printf("CPU temperature: %.1f C\n", sysHealth.internalTemperatureC());
+  Serial.printf("CPU temperature: %.2f C\n", sysHealth.internalTemperatureC());
 }
 
 void beginOtaIfReady() {
@@ -374,8 +375,10 @@ void processPpsCapture() {
   }
 
   gps.onPpsEdge(pulse.edgeTicks, pulse.elapsedPulses);
-  lastPpsSeenMs = millis();
-  lastPpsSeenMsValid = true;
+  if (gps.ppsRecentlySeen()) {
+    lastPpsSeenMs = millis();
+    lastPpsSeenMsValid = true;
+  }
   Serial.printf("PPS pulse #%lu %lu ticks | PPS: %llu us",
                 static_cast<unsigned long>(pulse.pulseCount),
                 static_cast<unsigned long>(pulse.edgeTicks),
