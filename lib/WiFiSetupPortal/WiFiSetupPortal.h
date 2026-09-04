@@ -8,9 +8,7 @@
 
 struct GpsDashboardSettings {
   bool rawLoggingEnabled = false;
-  bool ntpHoldoverEnabled = true;
   bool enableStats = true;
-  bool enableLocation = false;
   bool displayEnabled = true;
 };
 
@@ -22,19 +20,6 @@ enum GpsClockState : uint8_t {
 };
 
 struct GpsDashboardStatus {
-  static constexpr size_t MAX_NAV_SAT_DETAILS = 48;
-
-  struct NavSatDetail {
-    uint8_t constellation = 0;
-    uint16_t prn = 0;
-    int16_t elevationDeg = 0;
-    int16_t azimuthDeg = 0;
-    int16_t cn0DbHz = -1;
-    bool navSatFlagsValid = false;
-    uint8_t qualityInd = 0;
-    bool svUsed = false;
-  };
-
   bool satelliteCountValid = false;
   uint32_t satelliteCount = 0;
   bool ppsLastSeenAgeValid = false;
@@ -63,8 +48,6 @@ struct GpsDashboardStatus {
   bool timTpValid = false;
   uint32_t timTpTowMs = 0;
   int32_t timTpQErrPs = 0;
-  uint8_t timTpFlags = 0;
-  uint8_t timTpRefInfo = 0;
   bool timTpQErrInvalid = false;
   bool timTpTpNotLocked = false;
   bool timTpUtcEpochValid = false;
@@ -77,7 +60,6 @@ struct GpsDashboardStatus {
   double longitude = 0.0;
   bool altitudeValid = false;
   double altitudeMeters = 0.0;
-  bool locationEnabled = false;
   bool speedValid = false;
   double speedMps = 0.0;
   bool hdopValid = false;
@@ -86,7 +68,6 @@ struct GpsDashboardStatus {
   double pdop = 0.0;
   bool vdopValid = false;
   double vdop = 0.0;
-  bool navSatValid = false;
   uint8_t navPvtFixType = 0;
   bool navPvtGnssFixOK = false;
   bool navPvtValidDate = false;
@@ -94,15 +75,6 @@ struct GpsDashboardStatus {
   bool navPvtFullyResolved = false;
   bool navPvtConfirmedDate = false;
   bool navPvtConfirmedTime = false;
-  uint16_t gpsSatCount = 0;
-  uint16_t galileoSatCount = 0;
-  uint16_t beidouSatCount = 0;
-  uint16_t glonassSatCount = 0;
-  uint16_t qzssSatCount = 0;
-  uint16_t sbasSatCount = 0;
-  uint16_t otherSatCount = 0;
-  size_t navSatDetailCount = 0;
-  NavSatDetail navSatDetails[MAX_NAV_SAT_DETAILS];
   String gpsUartLabel;
   String ppsPinLabel;
   uint32_t gpsBaudRate = 9600;
@@ -110,6 +82,7 @@ struct GpsDashboardStatus {
   float cpuUtilizationPeakPercent = 0.0f;
   float internalTemperatureC = 0.0f;
   uint32_t freeHeapBytes = 0;
+  uint32_t totalHeapBytes = 0;
   uint64_t uptimeSeconds = 0;
 };
 

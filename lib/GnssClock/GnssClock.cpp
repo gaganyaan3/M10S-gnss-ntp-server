@@ -3,10 +3,6 @@
 GnssClock::GnssClock(GnssMaxM10S& gps, PpsCapture& ppsCapture)
     : gps_(gps), ppsCapture_(ppsCapture) {}
 
-void GnssClock::setHoldoverEnabled(bool enabled) {
-  holdoverEnabled_ = enabled;
-}
-
 bool GnssClock::navPvtCoarseEpochUs(uint64_t& epochUsUtcOut, uint32_t* receivedUsOut) {
   GnssNavPvtData pvt;
   gps_.navPvtSnapshot(pvt);
@@ -71,7 +67,7 @@ bool GnssClock::currentNtpEpochUs(uint64_t& epochUsUtcOut) {
       navPvtConfirmedTimeEpochUs(confirmedTimeEpochUsUtc, &confirmedTimeReceivedUs);
   const char* navPvtFallbackLabel = "ConfirmedTime";
 
-  if (confirmedTimeEpochValid && holdoverEnabled_ && holdoverValid_) {
+  if (confirmedTimeEpochValid && holdoverValid_) {
     uint64_t holdoverEpochUsUtc = 0;
     if (!currentHoldoverUs(holdoverEpochUsUtc)) {
       return false;
@@ -119,17 +115,15 @@ bool GnssClock::currentNtpEpochUs(uint64_t& epochUsUtcOut) {
 
   if (confirmedTimeEpochValid) {
     epochUsUtcOut = confirmedTimeEpochUsUtc;
-    if (holdoverEnabled_) {
-      anchorHoldoverUs(epochUsUtcOut);
-      startNavPvtHoldoverTimeout(kConfirmedTimeHoldoverTimeoutMs);
-      holdoverPpsDisciplined_ = false;
-      holdoverNavPvtReceivedUs_ = confirmedTimeReceivedUs;
-      holdoverNavPvtReceivedUsValid_ = true;
-    }
+    anchorHoldoverUs(epochUsUtcOut);
+    startNavPvtHoldoverTimeout(kConfirmedTimeHoldoverTimeoutMs);
+    holdoverPpsDisciplined_ = false;
+    holdoverNavPvtReceivedUs_ = confirmedTimeReceivedUs;
+    holdoverNavPvtReceivedUsValid_ = true;
     return true;
   }
 
-  if (holdoverEnabled_ && holdoverValid_) {
+  if (holdoverValid_) {
     uint32_t remainingSeconds = 0;
     if (!holdoverRemainingSeconds(remainingSeconds)) {
       holdoverValid_ = false;

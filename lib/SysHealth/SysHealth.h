@@ -7,6 +7,7 @@ struct SysHealthSnapshot {
   float cpuUtilizationPeakPercent = 0.0f;
   float internalTemperatureC = 0.0f;
   uint32_t freeHeapBytes = 0;
+  uint32_t totalHeapBytes = 0;
   uint64_t uptimeSeconds = 0;
 };
 

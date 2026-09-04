@@ -146,8 +146,6 @@ towMS    = 345601000
 towSubMS = 0
 qErr     = -32000 ps
 week     = 2433
-flags    = ...
-refInfo  = ...
 
               UBX-TIM-TP
                    │
@@ -173,7 +171,6 @@ Dashboard features:
 - Runtime GNSS status (satellites, GNSS epoch, PPS, NTP readiness)
 - System health from `SysHealth`: CPU avg/peak, ESP32 temperature, free heap RAM, uptime
 - Raw NMEA logging toggle (saved in NVS Preferences)
-- NTP holdover toggle (saved in NVS Preferences)
 - Display enable toggle (saved in NVS Preferences)
 
 Live NAV-PVT-style stats page:
@@ -237,7 +234,6 @@ Prefer a router DHCP reservation so this IP stays stable.
 ## future plan: can be added 
 ```
 UBX-NAV-PVT
-UBX-NAV-SAT
 UBX-NAV-SIG
 UBX-TIM-TP
 

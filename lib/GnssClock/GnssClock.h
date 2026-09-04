@@ -19,7 +19,6 @@ class GnssClock {
  public:
   GnssClock(GnssMaxM10S& gps, PpsCapture& ppsCapture);
 
-  void setHoldoverEnabled(bool enabled);
   bool navPvtConfirmedTimeEpochUs(uint64_t& epochUsUtcOut, uint32_t* receivedUsOut = nullptr);
   bool navPvtCoarseEpochUs(uint64_t& epochUsUtcOut, uint32_t* receivedUsOut = nullptr);
   bool currentPpsLockedEpochUs(uint64_t& epochUsUtcOut);
@@ -51,7 +50,6 @@ class GnssClock {
 
   GnssMaxM10S& gps_;
   PpsCapture& ppsCapture_;
-  bool holdoverEnabled_ = true;
   uint32_t correctionUseCount_ = 0;
   int32_t correctionLastAppliedUs_ = 0;
   bool holdoverValid_ = false;

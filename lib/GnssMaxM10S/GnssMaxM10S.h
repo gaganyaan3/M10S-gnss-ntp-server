@@ -4,28 +4,6 @@
 #include <TinyGPSPlus.h>
 #include <functional>
 
-enum GnssConstellation : uint8_t {
-  GNSS_CONSTELLATION_UNKNOWN = 0,
-  GNSS_CONSTELLATION_GPS = 1,
-  GNSS_CONSTELLATION_GALILEO = 2,
-  GNSS_CONSTELLATION_BEIDOU = 3,
-  GNSS_CONSTELLATION_GLONASS = 4,
-  GNSS_CONSTELLATION_QZSS = 5,
-  GNSS_CONSTELLATION_SBAS = 6,
-  GNSS_CONSTELLATION_OTHER = 7,
-};
-
-struct GnssSatelliteInfo {
-  uint8_t constellation = GNSS_CONSTELLATION_UNKNOWN;
-  uint16_t prn = 0;
-  int16_t elevationDeg = 0;
-  int16_t azimuthDeg = 0;
-  int16_t cn0DbHz = -1;
-  bool navSatFlagsValid = false;
-  uint8_t qualityInd = 0;
-  bool svUsed = false;
-};
-
 // Subset of UBX-NAV-PVT fields relevant to fix, time, and dashboard status.
 // fixType values: 0=no fix, 1=dead reckoning, 2=2D, 3=3D, 4=GNSS+DR, 5=time only
 struct GnssNavPvtData {
@@ -70,21 +48,6 @@ struct GnssNavDopData {
   uint32_t receivedMs = 0;
 };
 
-struct GnssNavSatSnapshot {
-  static constexpr size_t kMaxSatellites = 64;
-
-  bool valid = false;
-  uint16_t gpsCount = 0;
-  uint16_t galileoCount = 0;
-  uint16_t beidouCount = 0;
-  uint16_t glonassCount = 0;
-  uint16_t qzssCount = 0;
-  uint16_t sbasCount = 0;
-  uint16_t otherCount = 0;
-  size_t satelliteCount = 0;
-  GnssSatelliteInfo satellites[kMaxSatellites];
-};
-
 struct GnssMonRfData {
   bool valid = false;
   uint8_t jamInd = 0;
@@ -103,8 +66,6 @@ struct GnssTimTpData {
   bool valid = false;
   uint32_t towMs = 0;
   int32_t qErrPs = 0;
-  uint8_t flags = 0;
-  uint8_t refInfo = 0;
   bool qErrInvalid = false;
   bool tpNotLocked = false;
   bool utcEpochValid = false;
@@ -168,7 +129,6 @@ class GnssMaxM10S {
   double altitudeMeters();
   bool hasSpeed() const;
   double speedMps();
-  void navSatSnapshot(GnssNavSatSnapshot& out) const;
   void navPvtSnapshot(GnssNavPvtData& out) const;
   void monRfSnapshot(GnssMonRfData& out) const;
   void timTpSnapshot(GnssTimTpData& out) const;
@@ -176,10 +136,7 @@ class GnssMaxM10S {
 
  private:
   static constexpr size_t kMaxRawLineLength = 128;
-  static constexpr size_t kMaxSatelliteRecords = 64;
-  static constexpr size_t kMaxUbxPayloadLength = 1024;
-  static constexpr uint32_t kNavSatStaleMs = 6000UL;
-  static constexpr uint32_t kSatelliteCountStaleMs = 6000UL;
+  static constexpr size_t kMaxUbxPayloadLength = 128;
   static constexpr uint32_t kMaxPvtAgeForPpsMs = 1500UL;
   static constexpr uint32_t kMaxNavPvtStatusAgeMs = 5000UL;
   static constexpr uint32_t kMaxNavDopAgeMs = 5000UL;
@@ -188,14 +145,11 @@ class GnssMaxM10S {
   static constexpr uint32_t kPpsRecentlySeenMs = 2500UL;
   static constexpr uint32_t kMonRfStaleMs = 3000UL;
   static uint32_t toUnixUtc(int year, int month, int day, int hour, int minute, int second);
-  static GnssConstellation constellationFromPrn(int prn);
-  static GnssConstellation constellationFromUbxGnssId(uint8_t gnssId);
   static int32_t readI4(const uint8_t* payload, uint16_t offset);
   static uint32_t readU4(const uint8_t* payload, uint16_t offset);
   static uint16_t readU2(const uint8_t* payload, uint16_t offset);
   bool navPvtStatusFresh() const;
   bool navDopFresh() const;
-  void parseGsvSentence(const char* line);
   void parseGsaSentence(const char* line);
   void parseUbxByte(uint8_t byteValue);
   void sendUbxCfgPrtUart1(uint32_t baudRate);
@@ -212,24 +166,7 @@ class GnssMaxM10S {
   uint64_t ppsTicksToUs(uint64_t ticks) const;
   bool ppsEpochUsAtTicks(uint32_t ticks, uint64_t& epochUsUtcOut) const;
   void updateNavPvtLatencyEstimate(uint32_t receivedTicks);
-  void resetSatelliteRecords();
-  void upsertSatellite(GnssConstellation constellation,
-                       int prn,
-                       int elevationDeg,
-                       int azimuthDeg,
-                       int cn0DbHz,
-                       bool navSatFlagsValid,
-                       uint8_t qualityInd,
-                       bool svUsed,
-                       uint32_t nowMs);
-  void pruneStaleSatellites(uint32_t nowMs);
   bool timTpCanAnchorPps(uint64_t& epochNsUtcOut) const;
-
-  struct SatelliteRecord {
-    bool inUse = false;
-    GnssSatelliteInfo info;
-    uint32_t lastSeenMs = 0;
-  };
 
   HardwareSerial& serial_;
   uint8_t rxPin_;
@@ -289,7 +226,5 @@ class GnssMaxM10S {
   uint16_t monRfAgcCntSamples_[5] = {};
   uint8_t monRfAgcCntSamplePos_ = 0;
   uint8_t monRfAgcCntSampleCount_ = 0;
-  SatelliteRecord satelliteRecords_[kMaxSatelliteRecords] = {};
-  uint32_t lastNavSatUpdateMs_ = 0;
   uint32_t lastMonRfPollMs_ = 0;
 };

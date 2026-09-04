@@ -99,7 +99,6 @@ void updatePpsMcpwmTicksPerSecondFromCpuTemperature(bool forceLog = false) {
 void applyGpsDashboardSettings() {
   gps.enableRawLogging(gpsDashboardSettings.rawLoggingEnabled);
   gps.enableStats(gpsDashboardSettings.enableStats);
-  gnssClock.setHoldoverEnabled(gpsDashboardSettings.ntpHoldoverEnabled);
 }
 
 bool saveGpsDashboardSettings(const GpsDashboardSettings& settings) {
@@ -116,7 +115,6 @@ bool saveGpsDashboardSettings(const GpsDashboardSettings& settings) {
 
 void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus& statusOut) {
   settingsOut = gpsDashboardSettings;
-  statusOut.locationEnabled = settingsOut.enableLocation;
   statusOut.satelliteCountValid = gps.hasSatelliteCount();
   if (statusOut.satelliteCountValid) {
     statusOut.satelliteCount = gps.satelliteCount();
@@ -160,8 +158,7 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
   statusOut.ntpReady =
       ppsNtpReady ||
       statusOut.navPvtConfirmedTimeReady ||
-      (settingsOut.ntpHoldoverEnabled &&
-       clockDiagnostics.holdoverUtcValid &&
+      (clockDiagnostics.holdoverUtcValid &&
        clockDiagnostics.holdoverTimeoutValid);
 
   {
@@ -185,8 +182,6 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
     statusOut.timTpValid = timTp.valid;
     statusOut.timTpTowMs = timTp.towMs;
     statusOut.timTpQErrPs = timTp.qErrPs;
-    statusOut.timTpFlags = timTp.flags;
-    statusOut.timTpRefInfo = timTp.refInfo;
     statusOut.timTpQErrInvalid = timTp.qErrInvalid;
     statusOut.timTpTpNotLocked = timTp.tpNotLocked;
     statusOut.timTpUtcEpochValid = timTp.utcEpochValid;
@@ -201,6 +196,7 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
   statusOut.cpuUtilizationPeakPercent = health.cpuUtilizationPeakPercent;
   statusOut.internalTemperatureC = health.internalTemperatureC;
   statusOut.freeHeapBytes = health.freeHeapBytes;
+  statusOut.totalHeapBytes = health.totalHeapBytes;
   statusOut.uptimeSeconds = health.uptimeSeconds;
 
   {
@@ -252,36 +248,6 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
   statusOut.vdopValid = gps.hasVdop();
   if (statusOut.vdopValid) {
     statusOut.vdop = gps.vdop();
-  }
-
-  GnssNavSatSnapshot navSat;
-  gps.navSatSnapshot(navSat);
-  statusOut.navSatValid = navSat.valid;
-  statusOut.gpsSatCount = navSat.gpsCount;
-  statusOut.galileoSatCount = navSat.galileoCount;
-  statusOut.beidouSatCount = navSat.beidouCount;
-  statusOut.glonassSatCount = navSat.glonassCount;
-  statusOut.qzssSatCount = navSat.qzssCount;
-  statusOut.sbasSatCount = navSat.sbasCount;
-  statusOut.otherSatCount = navSat.otherCount;
-  statusOut.navSatDetailCount =
-      navSat.satelliteCount < GpsDashboardStatus::MAX_NAV_SAT_DETAILS
-          ? navSat.satelliteCount
-          : GpsDashboardStatus::MAX_NAV_SAT_DETAILS;
-  for (size_t i = 0; i < statusOut.navSatDetailCount; ++i) {
-    statusOut.navSatDetails[i].constellation = navSat.satellites[i].constellation;
-    statusOut.navSatDetails[i].prn = navSat.satellites[i].prn;
-    statusOut.navSatDetails[i].elevationDeg = navSat.satellites[i].elevationDeg;
-    statusOut.navSatDetails[i].azimuthDeg = navSat.satellites[i].azimuthDeg;
-    statusOut.navSatDetails[i].cn0DbHz = navSat.satellites[i].cn0DbHz;
-    statusOut.navSatDetails[i].navSatFlagsValid = navSat.satellites[i].navSatFlagsValid;
-    statusOut.navSatDetails[i].qualityInd = navSat.satellites[i].qualityInd;
-    statusOut.navSatDetails[i].svUsed = navSat.satellites[i].svUsed;
-  }
-
-  if (navSat.valid) {
-    statusOut.satelliteCountValid = true;
-    statusOut.satelliteCount = static_cast<uint32_t>(navSat.satelliteCount);
   }
 }
 
@@ -402,9 +368,7 @@ void updateDisplay(uint32_t nowMs) {
   uint32_t satCount = 0;
   const bool satValid = gps.hasSatelliteCount();
   if (satValid) {
-    GnssNavSatSnapshot navSat;
-    gps.navSatSnapshot(navSat);
-    satCount = navSat.valid ? static_cast<uint32_t>(navSat.satelliteCount) : gps.satelliteCount();
+    satCount = gps.satelliteCount();
   }
 
   const bool gpsHasFix = satValid && satCount > 0;

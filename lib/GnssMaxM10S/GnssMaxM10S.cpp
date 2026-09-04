@@ -5,13 +5,6 @@ namespace {
 constexpr uint32_t UNIX_GPS_EPOCH_OFFSET_SECONDS = 315964800UL;
 constexpr uint32_t SECONDS_PER_WEEK = 7UL * 24UL * 60UL * 60UL;
 
-int parseIntToken(const String& token, int fallback) {
-  if (token.length() == 0) {
-    return fallback;
-  }
-  return token.toInt();
-}
-
 bool isNmeaTextByte(uint8_t byteValue) {
   return byteValue >= 0x20 && byteValue <= 0x7E;
 }
@@ -161,7 +154,7 @@ void GnssMaxM10S::sendUbxCfgAntSupervisor() {
 
 void GnssMaxM10S::sendUbxCfgPrtUart1(uint32_t baudRate) {
   // UBX-CFG-PRT for UART1. Keep both UBX and NMEA enabled; only raise the
-  // baud rate so NAV-SAT/NAV-PVT cannot sit behind seconds of 9600-baud text.
+  // baud rate so NAV-PVT cannot sit behind seconds of 9600-baud text.
   uint8_t payload[20] = {};
   payload[0] = 1;  // portID: UART1
   payload[4] = 0xD0;
@@ -201,7 +194,6 @@ void GnssMaxM10S::begin() {
   }
   sendUbxCfgMsg(0x01, 0x07, 1);  // Enable UBX-NAV-PVT  on UART1
   sendUbxCfgMsg(0x01, 0x04, 1);  // Enable UBX-NAV-DOP  on UART1
-  sendUbxCfgMsg(0x01, 0x35, 1);  // Enable UBX-NAV-SAT  on UART1
   sendUbxCfgMsg(0x0D, 0x01, 1);  // Enable UBX-TIM-TP   on UART1
   sendUbxCfgMsg(0x0A, 0x38, 1);  // Enable UBX-MON-RF   on UART1
   const uint32_t antennaSupervisorKeys[] = {
@@ -244,11 +236,10 @@ void GnssMaxM10S::poll() {
     if (c == '\n') {
       if (rawLineBufferLength_ > 0) {
         rawLineBuffer_[rawLineBufferLength_] = '\0';
-        // Parse GSA for dilution values and GSV for per-satellite records
+        // Parse GSA for dilution values
         // only when stats collection is enabled to avoid unnecessary CPU work.
         if (statsEnabled_) {
           parseGsaSentence(rawLineBuffer_);
-          parseGsvSentence(rawLineBuffer_);
         }
         if (rawLoggingEnabled_) {
           Serial.print("RAW: ");
@@ -285,10 +276,6 @@ void GnssMaxM10S::enableRawLogging(bool enable) {
 
 void GnssMaxM10S::enableStats(bool enable) {
   statsEnabled_ = enable;
-  if (!statsEnabled_) {
-    resetSatelliteRecords();
-    lastNavSatUpdateMs_ = 0;
-  }
 }
 
 void GnssMaxM10S::onRawLine(RawLineCallback callback) {
@@ -626,12 +613,7 @@ uint32_t GnssMaxM10S::charsProcessed() const {
 }
 
 bool GnssMaxM10S::hasSatelliteCount() const {
-  if (navPvtStatusFresh()) {
-    return true;
-  }
-
-  return gps_.satellites.isValid() &&
-         gps_.satellites.age() <= kSatelliteCountStaleMs;
+  return navPvtStatusFresh();
 }
 
 uint32_t GnssMaxM10S::satelliteCount() {
@@ -639,7 +621,7 @@ uint32_t GnssMaxM10S::satelliteCount() {
     return navPvtData_.numSatellites;
   }
 
-  return gps_.satellites.value();
+  return 0;
 }
 
 bool GnssMaxM10S::hasHdop() const {
@@ -752,53 +734,6 @@ double GnssMaxM10S::speedMps() {
   return gps_.speed.mps();
 }
 
-void GnssMaxM10S::navSatSnapshot(GnssNavSatSnapshot& out) const {
-  out = GnssNavSatSnapshot{};
-
-  const uint32_t nowMs = millis();
-  for (size_t i = 0; i < kMaxSatelliteRecords; ++i) {
-    const SatelliteRecord& record = satelliteRecords_[i];
-    if (!record.inUse) {
-      continue;
-    }
-    if (nowMs - record.lastSeenMs > kNavSatStaleMs) {
-      continue;
-    }
-
-    if (out.satelliteCount < GnssNavSatSnapshot::kMaxSatellites) {
-      out.satellites[out.satelliteCount++] = record.info;
-    }
-
-    switch (record.info.constellation) {
-      case GNSS_CONSTELLATION_GPS:
-        ++out.gpsCount;
-        break;
-      case GNSS_CONSTELLATION_GALILEO:
-        ++out.galileoCount;
-        break;
-      case GNSS_CONSTELLATION_BEIDOU:
-        ++out.beidouCount;
-        break;
-      case GNSS_CONSTELLATION_GLONASS:
-        ++out.glonassCount;
-        break;
-      case GNSS_CONSTELLATION_QZSS:
-        ++out.qzssCount;
-        break;
-      case GNSS_CONSTELLATION_SBAS:
-        ++out.sbasCount;
-        break;
-      case GNSS_CONSTELLATION_OTHER:
-        ++out.otherCount;
-        break;
-      default:
-        break;
-    }
-  }
-
-  out.valid = (nowMs - lastNavSatUpdateMs_ <= kNavSatStaleMs) && (out.satelliteCount > 0);
-}
-
 void GnssMaxM10S::navPvtSnapshot(GnssNavPvtData& out) const {
   out = navPvtData_;
 }
@@ -812,28 +747,6 @@ void GnssMaxM10S::monRfSnapshot(GnssMonRfData& out) const {
 
 void GnssMaxM10S::timTpSnapshot(GnssTimTpData& out) const {
   out = timTpData_;
-}
-
-GnssConstellation GnssMaxM10S::constellationFromUbxGnssId(uint8_t gnssId) {
-  if (gnssId == 0) {
-    return GNSS_CONSTELLATION_GPS;
-  }
-  if (gnssId == 1) {
-    return GNSS_CONSTELLATION_SBAS;
-  }
-  if (gnssId == 2) {
-    return GNSS_CONSTELLATION_GALILEO;
-  }
-  if (gnssId == 3) {
-    return GNSS_CONSTELLATION_BEIDOU;
-  }
-  if (gnssId == 5) {
-    return GNSS_CONSTELLATION_QZSS;
-  }
-  if (gnssId == 6) {
-    return GNSS_CONSTELLATION_GLONASS;
-  }
-  return GNSS_CONSTELLATION_OTHER;
 }
 
 void GnssMaxM10S::parseUbxByte(uint8_t byteValue) {
@@ -947,7 +860,6 @@ void GnssMaxM10S::handleUbxFrame(uint8_t messageClass,
   constexpr uint8_t UBX_CLASS_MON = 0x0A;
   constexpr uint8_t UBX_ID_NAV_PVT = 0x07;
   constexpr uint8_t UBX_ID_NAV_DOP = 0x04;
-  constexpr uint8_t UBX_ID_NAV_SAT = 0x35;
   constexpr uint8_t UBX_ID_TIM_TP = 0x01;
   constexpr uint8_t UBX_ID_MON_RF = 0x38;
 
@@ -1018,12 +930,11 @@ void GnssMaxM10S::handleUbxFrame(uint8_t messageClass,
     const uint16_t week =
         static_cast<uint16_t>(payload[12]) |
         (static_cast<uint16_t>(payload[13]) << 8);
-    timTpData_.flags = payload[14];
-    timTpData_.refInfo = payload[15];
-    const bool utcTimeBase = (timTpData_.flags & 0x01) != 0;
-    const bool utcAvailable = (timTpData_.flags & 0x02) != 0;
-    timTpData_.qErrInvalid = (timTpData_.flags & 0x10) != 0;
-    timTpData_.tpNotLocked = (timTpData_.flags & 0x20) != 0;
+    const uint8_t flags = payload[14];
+    const bool utcTimeBase = (flags & 0x01) != 0;
+    const bool utcAvailable = (flags & 0x02) != 0;
+    timTpData_.qErrInvalid = (flags & 0x10) != 0;
+    timTpData_.tpNotLocked = (flags & 0x20) != 0;
     timTpData_.utcEpochValid = false;
     timTpPpsEpochUtcNs_ = 0;
     if (utcTimeBase && utcAvailable && !timTpData_.tpNotLocked) {
@@ -1153,191 +1064,10 @@ void GnssMaxM10S::handleUbxFrame(uint8_t messageClass,
     return;
   }
 
-  // ---- UBX-NAV-SAT (0x01 / 0x35) ----------------------------------------
-  if (messageId != UBX_ID_NAV_SAT || payloadLength < 8) {
-    return;
-  }
-
-  // Honor stats collection flag: if disabled, don't process NAV-SAT payloads.
-  if (!statsEnabled_) {
-    return;
-  }
-
-  const uint8_t numSvs = payload[5];
-  const uint16_t availableRecords = static_cast<uint16_t>((payloadLength - 8) / 12);
-  // Some firmware/variants may set numSvs to 0 or an incorrect value; prefer
-  // the number of available records when numSvs looks invalid.
-  const uint16_t recordsToRead = (numSvs > 0) ? (numSvs < availableRecords ? numSvs : availableRecords)
-                                                    : availableRecords;
-
-  resetSatelliteRecords();
-
-  for (uint16_t i = 0; i < recordsToRead; ++i) {
-    const uint16_t offset = static_cast<uint16_t>(8 + i * 12);
-    const uint8_t gnssId = payload[offset + 0];
-    const uint8_t svId = payload[offset + 1];
-    const uint8_t cno = payload[offset + 2];
-    const int8_t elevation = static_cast<int8_t>(payload[offset + 3]);
-    const int16_t azimuth = static_cast<int16_t>(
-        static_cast<uint16_t>(payload[offset + 4]) |
-        (static_cast<uint16_t>(payload[offset + 5]) << 8));
-    const uint32_t flags = static_cast<uint32_t>(payload[offset + 8]) |
-                           (static_cast<uint32_t>(payload[offset + 9]) << 8) |
-                           (static_cast<uint32_t>(payload[offset + 10]) << 16) |
-                           (static_cast<uint32_t>(payload[offset + 11]) << 24);
-    const uint8_t qualityInd = static_cast<uint8_t>(flags & 0x07);
-    const bool svUsed = (flags & 0x08) != 0;
-
-    // Prefer the GNSS ID when it yields a known constellation, but fall back
-    // to PRN-based detection when GNSS ID is missing or unrecognized.
-    GnssConstellation constellation = constellationFromUbxGnssId(gnssId);
-    if (constellation == GNSS_CONSTELLATION_OTHER || constellation == GNSS_CONSTELLATION_UNKNOWN) {
-      const int prnCandidate = static_cast<int>(svId);
-      const GnssConstellation byPrn = constellationFromPrn(prnCandidate);
-      if (byPrn != GNSS_CONSTELLATION_UNKNOWN) {
-        constellation = byPrn;
-      } else if (constellation == GNSS_CONSTELLATION_UNKNOWN) {
-        constellation = GNSS_CONSTELLATION_OTHER;
-      }
-    }
-    const int cn0DbHz = cno > 0 ? static_cast<int>(cno) : -1;
-
-    upsertSatellite(constellation,
-                   static_cast<int>(svId),
-                   static_cast<int>(elevation),
-                   static_cast<int>(azimuth),
-                   cn0DbHz,
-                   true,
-                   qualityInd,
-                   svUsed,
-                   nowMs);
-  }
-
-  lastNavSatUpdateMs_ = nowMs;
-}
-
-void GnssMaxM10S::resetSatelliteRecords() {
-  for (size_t i = 0; i < kMaxSatelliteRecords; ++i) {
-    satelliteRecords_[i].inUse = false;
-    satelliteRecords_[i].lastSeenMs = 0;
-    satelliteRecords_[i].info = GnssSatelliteInfo{};
-  }
 }
 
 void GnssMaxM10S::enableUbxLogging(bool enable) {
   ubxLoggingEnabled_ = enable;
-}
-
-GnssConstellation GnssMaxM10S::constellationFromPrn(int prn) {
-  if (prn >= 1 && prn <= 32) {
-    return GNSS_CONSTELLATION_GPS;
-  }
-  if (prn >= 33 && prn <= 64) {
-    return GNSS_CONSTELLATION_SBAS;
-  }
-  if (prn >= 65 && prn <= 96) {
-    return GNSS_CONSTELLATION_GLONASS;
-  }
-  if (prn >= 120 && prn <= 158) {
-    return GNSS_CONSTELLATION_SBAS;
-  }
-  if (prn >= 193 && prn <= 199) {
-    return GNSS_CONSTELLATION_QZSS;
-  }
-  if (prn >= 201 && prn <= 237) {
-    return GNSS_CONSTELLATION_BEIDOU;
-  }
-  if (prn >= 301 && prn <= 336) {
-    return GNSS_CONSTELLATION_GALILEO;
-  }
-
-  return GNSS_CONSTELLATION_UNKNOWN;
-}
-
-GnssConstellation constellationFromTalker(const String& talker) {
-  if (talker == "GP") {
-    return GNSS_CONSTELLATION_GPS;
-  }
-  if (talker == "GA") {
-    return GNSS_CONSTELLATION_GALILEO;
-  }
-  if (talker == "GB" || talker == "BD") {
-    return GNSS_CONSTELLATION_BEIDOU;
-  }
-  if (talker == "GL") {
-    return GNSS_CONSTELLATION_GLONASS;
-  }
-  if (talker == "GQ") {
-    return GNSS_CONSTELLATION_QZSS;
-  }
-  if (talker == "GS" || talker == "SB") {
-    return GNSS_CONSTELLATION_SBAS;
-  }
-  return GNSS_CONSTELLATION_UNKNOWN;
-}
-
-void GnssMaxM10S::parseGsvSentence(const char* line) {
-  String sentence(line);
-  if (!sentence.startsWith("$") || sentence.indexOf("GSV") < 0) {
-    return;
-  }
-
-  const int checksumAt = sentence.indexOf('*');
-  if (checksumAt > 0) {
-    sentence = sentence.substring(0, checksumAt);
-  }
-  if (sentence.length() < 6) {
-    return;
-  }
-
-  const String talker = sentence.substring(1, 3);
-  const String messageType = sentence.substring(3, 6);
-  if (messageType != "GSV") {
-    return;
-  }
-
-  String fields[24];
-  size_t fieldCount = 0;
-  int start = 0;
-  while (start >= 0 && fieldCount < 24) {
-    const int comma = sentence.indexOf(',', start);
-    if (comma < 0) {
-      fields[fieldCount++] = sentence.substring(start);
-      break;
-    }
-    fields[fieldCount++] = sentence.substring(start, comma);
-    start = comma + 1;
-  }
-
-  if (fieldCount < 8) {
-    return;
-  }
-
-  const GnssConstellation talkerConstellation = constellationFromTalker(talker);
-  const uint32_t nowMs = millis();
-  for (size_t i = 4; i + 3 < fieldCount; i += 4) {
-    const int prn = parseIntToken(fields[i], -1);
-    if (prn <= 0) {
-      continue;
-    }
-
-    const int elev = parseIntToken(fields[i + 1], -1);
-    const int az = parseIntToken(fields[i + 2], -1);
-    const int cn0 = parseIntToken(fields[i + 3], -1);
-
-    GnssConstellation constellation = talkerConstellation;
-    if (constellation == GNSS_CONSTELLATION_UNKNOWN || talker == "GN") {
-      constellation = constellationFromPrn(prn);
-    }
-    if (constellation == GNSS_CONSTELLATION_UNKNOWN) {
-      constellation = GNSS_CONSTELLATION_OTHER;
-    }
-
-    upsertSatellite(constellation, prn, elev, az, cn0, false, 0, false, nowMs);
-    lastNavSatUpdateMs_ = nowMs;
-  }
-
-  pruneStaleSatellites(nowMs);
 }
 
 void GnssMaxM10S::parseGsaSentence(const char* line) {
@@ -1401,65 +1131,6 @@ void GnssMaxM10S::parseGsaSentence(const char* line) {
     vdopValid_ = true;
   }
 
-}
-
-void GnssMaxM10S::upsertSatellite(GnssConstellation constellation,
-                                  int prn,
-                                  int elevationDeg,
-                                  int azimuthDeg,
-                                  int cn0DbHz,
-                                  bool navSatFlagsValid,
-                                  uint8_t qualityInd,
-                                  bool svUsed,
-                                  uint32_t nowMs) {
-  size_t freeSlot = kMaxSatelliteRecords;
-  for (size_t i = 0; i < kMaxSatelliteRecords; ++i) {
-    if (!satelliteRecords_[i].inUse) {
-      if (freeSlot == kMaxSatelliteRecords) {
-        freeSlot = i;
-      }
-      continue;
-    }
-    if (satelliteRecords_[i].info.constellation == constellation &&
-        satelliteRecords_[i].info.prn == static_cast<uint16_t>(prn)) {
-      satelliteRecords_[i].info.elevationDeg = static_cast<int16_t>(elevationDeg);
-      satelliteRecords_[i].info.azimuthDeg = static_cast<int16_t>(azimuthDeg);
-      satelliteRecords_[i].info.cn0DbHz = static_cast<int16_t>(cn0DbHz);
-      if (navSatFlagsValid) {
-        satelliteRecords_[i].info.navSatFlagsValid = true;
-        satelliteRecords_[i].info.qualityInd = qualityInd;
-        satelliteRecords_[i].info.svUsed = svUsed;
-      }
-      satelliteRecords_[i].lastSeenMs = nowMs;
-      return;
-    }
-  }
-
-  if (freeSlot == kMaxSatelliteRecords) {
-    return;
-  }
-
-  satelliteRecords_[freeSlot].inUse = true;
-  satelliteRecords_[freeSlot].info.constellation = constellation;
-  satelliteRecords_[freeSlot].info.prn = static_cast<uint16_t>(prn);
-  satelliteRecords_[freeSlot].info.elevationDeg = static_cast<int16_t>(elevationDeg);
-  satelliteRecords_[freeSlot].info.azimuthDeg = static_cast<int16_t>(azimuthDeg);
-  satelliteRecords_[freeSlot].info.cn0DbHz = static_cast<int16_t>(cn0DbHz);
-  satelliteRecords_[freeSlot].info.navSatFlagsValid = navSatFlagsValid;
-  satelliteRecords_[freeSlot].info.qualityInd = qualityInd;
-  satelliteRecords_[freeSlot].info.svUsed = svUsed;
-  satelliteRecords_[freeSlot].lastSeenMs = nowMs;
-}
-
-void GnssMaxM10S::pruneStaleSatellites(uint32_t nowMs) {
-  for (size_t i = 0; i < kMaxSatelliteRecords; ++i) {
-    if (!satelliteRecords_[i].inUse) {
-      continue;
-    }
-    if (nowMs - satelliteRecords_[i].lastSeenMs > kNavSatStaleMs) {
-      satelliteRecords_[i].inUse = false;
-    }
-  }
 }
 
 uint32_t GnssMaxM10S::toUnixUtc(

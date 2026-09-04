@@ -3,6 +3,7 @@
 void SysHealth::begin() {
   snapshot_.internalTemperatureC = readInternalTemperatureC();
   snapshot_.freeHeapBytes = ESP.getFreeHeap();
+  snapshot_.totalHeapBytes = ESP.getHeapSize();
   snapshot_.uptimeSeconds = millis() / 1000ULL;
 }
 
@@ -38,6 +39,7 @@ void SysHealth::update(uint64_t loopBusyUs) {
     snapshot_.cpuUtilizationPeakPercent = cpuReportSamplePeakPercent_;
     snapshot_.internalTemperatureC = readInternalTemperatureC();
     snapshot_.freeHeapBytes = ESP.getFreeHeap();
+    snapshot_.totalHeapBytes = ESP.getHeapSize();
     snapshot_.uptimeSeconds = millis() / 1000ULL;
     cpuReportSampleSumPercent_ = 0.0f;
     cpuReportSamplePeakPercent_ = 0.0f;
@@ -48,6 +50,7 @@ void SysHealth::update(uint64_t loopBusyUs) {
 SysHealthSnapshot SysHealth::snapshot() const {
   SysHealthSnapshot current = snapshot_;
   current.freeHeapBytes = ESP.getFreeHeap();
+  current.totalHeapBytes = ESP.getHeapSize();
   current.uptimeSeconds = millis() / 1000ULL;
   return current;
 }
