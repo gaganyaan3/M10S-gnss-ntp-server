@@ -26,23 +26,48 @@ struct GnssSatelliteInfo {
   bool svUsed = false;
 };
 
-// Subset of UBX-NAV-PVT fields relevant to fix quality and time validity.
+// Subset of UBX-NAV-PVT fields relevant to fix, time, and dashboard status.
 // fixType values: 0=no fix, 1=dead reckoning, 2=2D, 3=3D, 4=GNSS+DR, 5=time only
 struct GnssNavPvtData {
   bool valid = false;           // true once a NAV-PVT frame has been received
   uint8_t fixType = 0;          // payload byte 20
+  uint8_t numSatellites = 0;    // payload byte 23
   bool gnssFixOK = false;       // flags byte 21, bit 0
   bool validDate = false;       // valid byte 11, bit 0
   bool validTime = false;       // valid byte 11, bit 1
   bool fullyResolved = false;   // valid byte 11, bit 2
   bool confirmedDate = false;   // flags2 byte 22, bit 6
   bool confirmedTime = false;   // flags2 byte 22, bit 7
+  bool positionValid = false;
+  bool altitudeValid = false;
+  bool speedValid = false;
   bool utcEpochValid = false;
   uint32_t epochUtc = 0;
   int32_t nanoUtc = 0;           // payload bytes 16..19, signed nanosecond fraction
   uint32_t timeAccuracyNs = 0;   // payload bytes 12..15
+  int32_t longitudeDeg1e7 = 0;   // payload bytes 24..27
+  int32_t latitudeDeg1e7 = 0;    // payload bytes 28..31
+  int32_t heightMm = 0;          // payload bytes 32..35, ellipsoid height
+  int32_t heightMslMm = 0;       // payload bytes 36..39, mean sea level height
+  uint32_t horizontalAccuracyMm = 0;
+  uint32_t verticalAccuracyMm = 0;
+  int32_t groundSpeedMmPerSec = 0;
+  uint32_t speedAccuracyMmPerSec = 0;
+  uint16_t positionDop = 0;      // payload bytes 76..77, scale 0.01
   uint32_t receivedMs = 0;
   uint32_t receivedUs = 0;
+};
+
+struct GnssNavDopData {
+  bool valid = false;
+  uint16_t geometricDop = 0;
+  uint16_t positionDop = 0;
+  uint16_t timeDop = 0;
+  uint16_t verticalDop = 0;
+  uint16_t horizontalDop = 0;
+  uint16_t northingDop = 0;
+  uint16_t eastingDop = 0;
+  uint32_t receivedMs = 0;
 };
 
 struct GnssNavSatSnapshot {
@@ -156,6 +181,8 @@ class GnssMaxM10S {
   static constexpr uint32_t kNavSatStaleMs = 6000UL;
   static constexpr uint32_t kSatelliteCountStaleMs = 6000UL;
   static constexpr uint32_t kMaxPvtAgeForPpsMs = 1500UL;
+  static constexpr uint32_t kMaxNavPvtStatusAgeMs = 5000UL;
+  static constexpr uint32_t kMaxNavDopAgeMs = 5000UL;
   static constexpr uint32_t kMaxTimTpAgeForPpsMs = 1500UL;
   static constexpr uint32_t kMaxPpsHoldoverMs = 10000UL;
   static constexpr uint32_t kPpsRecentlySeenMs = 2500UL;
@@ -163,6 +190,11 @@ class GnssMaxM10S {
   static uint32_t toUnixUtc(int year, int month, int day, int hour, int minute, int second);
   static GnssConstellation constellationFromPrn(int prn);
   static GnssConstellation constellationFromUbxGnssId(uint8_t gnssId);
+  static int32_t readI4(const uint8_t* payload, uint16_t offset);
+  static uint32_t readU4(const uint8_t* payload, uint16_t offset);
+  static uint16_t readU2(const uint8_t* payload, uint16_t offset);
+  bool navPvtStatusFresh() const;
+  bool navDopFresh() const;
   void parseGsvSentence(const char* line);
   void parseGsaSentence(const char* line);
   void parseUbxByte(uint8_t byteValue);
@@ -249,6 +281,7 @@ class GnssMaxM10S {
   uint16_t navPvtLatencySamples_ = 0;
 
   GnssNavPvtData navPvtData_ = {};
+  GnssNavDopData navDopData_ = {};
   GnssMonRfData monRfData_ = {};
   GnssTimTpData timTpData_ = {};
   bool timTpPendingForPps_ = false;

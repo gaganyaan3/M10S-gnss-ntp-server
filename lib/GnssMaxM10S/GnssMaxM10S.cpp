@@ -24,6 +24,32 @@ GnssMaxM10S::GnssMaxM10S(uint8_t rxPin,
                          HardwareSerial& serialPort)
     : serial_(serialPort), rxPin_(rxPin), txPin_(txPin), baud_(baud) {}
 
+uint16_t GnssMaxM10S::readU2(const uint8_t* payload, uint16_t offset) {
+  return static_cast<uint16_t>(payload[offset]) |
+         (static_cast<uint16_t>(payload[offset + 1]) << 8);
+}
+
+uint32_t GnssMaxM10S::readU4(const uint8_t* payload, uint16_t offset) {
+  return static_cast<uint32_t>(payload[offset]) |
+         (static_cast<uint32_t>(payload[offset + 1]) << 8) |
+         (static_cast<uint32_t>(payload[offset + 2]) << 16) |
+         (static_cast<uint32_t>(payload[offset + 3]) << 24);
+}
+
+int32_t GnssMaxM10S::readI4(const uint8_t* payload, uint16_t offset) {
+  return static_cast<int32_t>(readU4(payload, offset));
+}
+
+bool GnssMaxM10S::navPvtStatusFresh() const {
+  return navPvtData_.valid &&
+         millis() - navPvtData_.receivedMs <= kMaxNavPvtStatusAgeMs;
+}
+
+bool GnssMaxM10S::navDopFresh() const {
+  return navDopData_.valid &&
+         millis() - navDopData_.receivedMs <= kMaxNavDopAgeMs;
+}
+
 void GnssMaxM10S::sendUbxCfgMsg(uint8_t msgClass, uint8_t msgId, uint8_t rate) {
   // UBX-CFG-MSG (0x06 0x01) — 8-byte payload:
   // [0] msgClass  [1] msgId
@@ -174,6 +200,7 @@ void GnssMaxM10S::begin() {
     delay(100);
   }
   sendUbxCfgMsg(0x01, 0x07, 1);  // Enable UBX-NAV-PVT  on UART1
+  sendUbxCfgMsg(0x01, 0x04, 1);  // Enable UBX-NAV-DOP  on UART1
   sendUbxCfgMsg(0x01, 0x35, 1);  // Enable UBX-NAV-SAT  on UART1
   sendUbxCfgMsg(0x0D, 0x01, 1);  // Enable UBX-TIM-TP   on UART1
   sendUbxCfgMsg(0x0A, 0x38, 1);  // Enable UBX-MON-RF   on UART1
@@ -316,6 +343,10 @@ void GnssMaxM10S::onPpsEdge(uint32_t edgeTicks, uint32_t elapsedPulses) {
 }
 
 ClockStamp GnssMaxM10S::latestUtc() {
+  if (navPvtStatusFresh() && navPvtData_.utcEpochValid) {
+    return {true, navPvtData_.epochUtc};
+  }
+
   if (!gps_.date.isValid() || !gps_.time.isValid()) {
     return {false, 0};
   }
@@ -332,6 +363,12 @@ ClockStamp GnssMaxM10S::latestUtc() {
 }
 
 bool GnssMaxM10S::currentUtcEpoch(uint32_t& epochUtcOut) {
+  uint64_t epochMsUtc = 0;
+  if (navPvtUtcEpochMs(epochMsUtc)) {
+    epochUtcOut = static_cast<uint32_t>(epochMsUtc / 1000ULL);
+    return true;
+  }
+
   if (!gps_.date.isValid() || !gps_.time.isValid()) {
     return false;
   }
@@ -357,6 +394,10 @@ bool GnssMaxM10S::currentUtcEpoch(uint32_t& epochUtcOut) {
 }
 
 bool GnssMaxM10S::currentUtcEpochMs(uint64_t& epochMsUtcOut) {
+  if (navPvtUtcEpochMs(epochMsUtcOut)) {
+    return true;
+  }
+
   if (!gps_.date.isValid() || !gps_.time.isValid()) {
     return false;
   }
@@ -585,63 +626,129 @@ uint32_t GnssMaxM10S::charsProcessed() const {
 }
 
 bool GnssMaxM10S::hasSatelliteCount() const {
+  if (navPvtStatusFresh()) {
+    return true;
+  }
+
   return gps_.satellites.isValid() &&
          gps_.satellites.age() <= kSatelliteCountStaleMs;
 }
 
 uint32_t GnssMaxM10S::satelliteCount() {
+  if (navPvtStatusFresh()) {
+    return navPvtData_.numSatellites;
+  }
+
   return gps_.satellites.value();
 }
 
 bool GnssMaxM10S::hasHdop() const {
+  if (navDopFresh() && navDopData_.horizontalDop > 0) {
+    return true;
+  }
+
   return gps_.hdop.isValid();
 }
 
 float GnssMaxM10S::hdop() {
+  if (navDopFresh() && navDopData_.horizontalDop > 0) {
+    return static_cast<float>(navDopData_.horizontalDop) / 100.0f;
+  }
+
   return static_cast<float>(gps_.hdop.hdop());
 }
 
 bool GnssMaxM10S::hasPdop() const {
+  if (navDopFresh() && navDopData_.positionDop > 0) {
+    return true;
+  }
+  if (navPvtStatusFresh() && navPvtData_.positionDop > 0) {
+    return true;
+  }
+
   return pdopValid_;
 }
 
 float GnssMaxM10S::pdop() {
+  if (navDopFresh() && navDopData_.positionDop > 0) {
+    return static_cast<float>(navDopData_.positionDop) / 100.0f;
+  }
+  if (navPvtStatusFresh() && navPvtData_.positionDop > 0) {
+    return static_cast<float>(navPvtData_.positionDop) / 100.0f;
+  }
+
   return pdop_;
 }
 
 bool GnssMaxM10S::hasVdop() const {
+  if (navDopFresh() && navDopData_.verticalDop > 0) {
+    return true;
+  }
+
   return vdopValid_;
 }
 
 float GnssMaxM10S::vdop() {
+  if (navDopFresh() && navDopData_.verticalDop > 0) {
+    return static_cast<float>(navDopData_.verticalDop) / 100.0f;
+  }
+
   return vdop_;
 }
 
 bool GnssMaxM10S::hasLocation() const {
+  if (navPvtStatusFresh() && navPvtData_.positionValid) {
+    return true;
+  }
+
   return gps_.location.isValid();
 }
 
 double GnssMaxM10S::latitude() {
+  if (navPvtStatusFresh() && navPvtData_.positionValid) {
+    return static_cast<double>(navPvtData_.latitudeDeg1e7) / 10000000.0;
+  }
+
   return gps_.location.lat();
 }
 
 double GnssMaxM10S::longitude() {
+  if (navPvtStatusFresh() && navPvtData_.positionValid) {
+    return static_cast<double>(navPvtData_.longitudeDeg1e7) / 10000000.0;
+  }
+
   return gps_.location.lng();
 }
 
 bool GnssMaxM10S::hasAltitude() const {
+  if (navPvtStatusFresh() && navPvtData_.altitudeValid) {
+    return true;
+  }
+
   return gps_.altitude.isValid();
 }
 
 double GnssMaxM10S::altitudeMeters() {
+  if (navPvtStatusFresh() && navPvtData_.altitudeValid) {
+    return static_cast<double>(navPvtData_.heightMslMm) / 1000.0;
+  }
+
   return gps_.altitude.meters();
 }
 
 bool GnssMaxM10S::hasSpeed() const {
+  if (navPvtStatusFresh() && navPvtData_.speedValid) {
+    return true;
+  }
+
   return gps_.speed.isValid();
 }
 
 double GnssMaxM10S::speedMps() {
+  if (navPvtStatusFresh() && navPvtData_.speedValid) {
+    return static_cast<double>(navPvtData_.groundSpeedMmPerSec) / 1000.0;
+  }
+
   return gps_.speed.mps();
 }
 
@@ -839,6 +946,7 @@ void GnssMaxM10S::handleUbxFrame(uint8_t messageClass,
   constexpr uint8_t UBX_CLASS_TIM = 0x0D;
   constexpr uint8_t UBX_CLASS_MON = 0x0A;
   constexpr uint8_t UBX_ID_NAV_PVT = 0x07;
+  constexpr uint8_t UBX_ID_NAV_DOP = 0x04;
   constexpr uint8_t UBX_ID_NAV_SAT = 0x35;
   constexpr uint8_t UBX_ID_TIM_TP = 0x01;
   constexpr uint8_t UBX_ID_MON_RF = 0x38;
@@ -957,8 +1065,8 @@ void GnssMaxM10S::handleUbxFrame(uint8_t messageClass,
   //     Serial.println();
   // }
   // ---- UBX-NAV-PVT (0x01 / 0x07) ----------------------------------------
-  // Payload must be at least 23 bytes to reach flags2 (byte 22).
-  if (messageId == UBX_ID_NAV_PVT && payloadLength >= 23) {
+  // Payload must be at least 78 bytes to reach pDOP (bytes 76..77).
+  if (messageId == UBX_ID_NAV_PVT && payloadLength >= 78) {
     const uint16_t year = static_cast<uint16_t>(payload[4]) |
                           (static_cast<uint16_t>(payload[5]) << 8);
     const uint8_t month = payload[6];
@@ -980,16 +1088,32 @@ void GnssMaxM10S::handleUbxFrame(uint8_t messageClass,
     const uint8_t fixTypeByte = payload[20];  // fix type
     const uint8_t flagsByte  = payload[21];   // gnssFixOK etc.
     const uint8_t flags2Byte = payload[22];   // confirmedDate/Time
+    const bool fixOk = (flagsByte & 0x01) != 0;
+    const bool hasPositionFix =
+        fixOk && (fixTypeByte == 2 || fixTypeByte == 3 || fixTypeByte == 4);
 
     navPvtData_.fixType       = fixTypeByte;
-    navPvtData_.gnssFixOK     = (flagsByte  & 0x01) != 0;
+    navPvtData_.numSatellites = payload[23];
+    navPvtData_.gnssFixOK     = fixOk;
     navPvtData_.validDate     = (validByte  & 0x01) != 0;
     navPvtData_.validTime     = (validByte  & 0x02) != 0;
     navPvtData_.fullyResolved = (validByte  & 0x04) != 0;
     navPvtData_.confirmedDate = (flags2Byte & 0x40) != 0;
     navPvtData_.confirmedTime = (flags2Byte & 0x80) != 0;
+    navPvtData_.positionValid = hasPositionFix;
+    navPvtData_.altitudeValid = hasPositionFix;
+    navPvtData_.speedValid = hasPositionFix;
     navPvtData_.timeAccuracyNs = timeAccuracyNs;
     navPvtData_.nanoUtc        = nanoUtc;
+    navPvtData_.longitudeDeg1e7 = readI4(payload, 24);
+    navPvtData_.latitudeDeg1e7 = readI4(payload, 28);
+    navPvtData_.heightMm = readI4(payload, 32);
+    navPvtData_.heightMslMm = readI4(payload, 36);
+    navPvtData_.horizontalAccuracyMm = readU4(payload, 40);
+    navPvtData_.verticalAccuracyMm = readU4(payload, 44);
+    navPvtData_.groundSpeedMmPerSec = readI4(payload, 60);
+    navPvtData_.speedAccuracyMmPerSec = readU4(payload, 68);
+    navPvtData_.positionDop = readU2(payload, 76);
     navPvtData_.utcEpochValid =
         navPvtData_.validDate &&
         navPvtData_.validTime &&
@@ -1012,6 +1136,20 @@ void GnssMaxM10S::handleUbxFrame(uint8_t messageClass,
     navPvtData_.receivedUs = micros();
     navPvtData_.valid         = true;
     updateNavPvtLatencyEstimate(ppsNowTicksFn_());
+    return;
+  }
+
+  // ---- UBX-NAV-DOP (0x01 / 0x04) ----------------------------------------
+  if (messageId == UBX_ID_NAV_DOP && payloadLength >= 18) {
+    navDopData_.geometricDop = readU2(payload, 4);
+    navDopData_.positionDop = readU2(payload, 6);
+    navDopData_.timeDop = readU2(payload, 8);
+    navDopData_.verticalDop = readU2(payload, 10);
+    navDopData_.horizontalDop = readU2(payload, 12);
+    navDopData_.northingDop = readU2(payload, 14);
+    navDopData_.eastingDop = readU2(payload, 16);
+    navDopData_.receivedMs = nowMs;
+    navDopData_.valid = true;
     return;
   }
 
