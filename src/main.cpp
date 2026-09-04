@@ -71,6 +71,20 @@ unsigned long holdoverSetAtMs = 0;
 bool otaDisabledLogged = false;
 int16_t appliedPpsMcpwmTemperatureDeciC = INT16_MIN;
 
+const char* clockStateLabel(GpsClockState state) {
+  switch (state) {
+    case GPS_CLOCK_STATE_CONFIRMED_TIME:
+      return "ConfirmedTime";
+    case GPS_CLOCK_STATE_PPS_LOCKED:
+      return "PPSLocked";
+    case GPS_CLOCK_STATE_HOLDOVER:
+      return "HOLDOVER";
+    case GPS_CLOCK_STATE_UNSYNCED:
+    default:
+      return "UNSYNCED";
+  }
+}
+
 void updatePpsMcpwmTicksPerSecondFromCpuTemperature(bool forceLog = false) {
   const float temperatureC = sysHealth.internalTemperatureC();
   const CalibratedFqValue calibration =
@@ -364,6 +378,7 @@ void updateDisplay(uint32_t nowMs) {
   char gpsTimeLine[16] = "No GNSS";
   char gpsDateLine[16] = "fix";
   char statusLine[64] = "";
+  char clockStateLine[32] = "";
 
   uint32_t satCount = 0;
   const bool satValid = gps.hasSatelliteCount();
@@ -449,10 +464,19 @@ void updateDisplay(uint32_t nowMs) {
     snprintf(statusLine, sizeof(statusLine), "Sat:-- wf:--");
   }
 
+  GpsDashboardSettings displaySettings;
+  GpsDashboardStatus displayStatus;
+  fillGpsDashboardData(displaySettings, displayStatus);
+  snprintf(clockStateLine,
+           sizeof(clockStateLine),
+           "State: %s",
+           clockStateLabel(displayStatus.clockState));
+
   OledClockPage page;
   page.gpsTimeLine = gpsTimeLine;
   page.gpsDateLine = gpsDateLine;
   page.statusLine = statusLine;
+  page.clockStateLine = clockStateLine;
   oledDisplay.drawClockPage(page);
 }
 

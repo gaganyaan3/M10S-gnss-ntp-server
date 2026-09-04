@@ -56,6 +56,8 @@ void OledClockDisplay::drawClockPage(const OledClockPage& page) {
   display_.clearBuffer();
   display_.setFont(u8g2_font_6x10_tf);
   display_.drawStr(0, 14, page.statusLine);
+  display_.setFont(u8g2_font_6x13_tf);
+  display_.drawStr(0, 34, page.clockStateLine);
 
   display_.setFont(u8g2_font_6x13_tf);
   display_.drawStr(0, 56, "GNSS:");
