@@ -185,6 +185,21 @@ String formatEpochMicros(uint64_t epochUtcMicros) {
   return String(buffer);
 }
 
+String formatSignedMicros(int64_t microsValue) {
+  const char sign = microsValue < 0 ? '-' : '+';
+  const uint64_t magnitude = microsValue < 0
+                                 ? static_cast<uint64_t>(-(microsValue + 1)) + 1ULL
+                                 : static_cast<uint64_t>(microsValue);
+  char buffer[40];
+  snprintf(buffer,
+           sizeof(buffer),
+           "%c%llu.%03llu ms",
+           sign,
+           static_cast<unsigned long long>(magnitude / 1000ULL),
+           static_cast<unsigned long long>(magnitude % 1000ULL));
+  return String(buffer);
+}
+
 }  // namespace
 
 WiFiSetupPortal::WiFiSetupPortal() : server_(80) {}
@@ -963,6 +978,8 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
   String gpsTime = F("Unavailable");
   String gpsUtcEpoch = F("Unavailable");
   String holdoverUtcEpoch = F("Unavailable");
+  String microsUtcEpoch = F("Waiting for first PPS");
+  String microsDrift = F("Unavailable");
   const bool gpsEpochAvailable =
       status.gpsEpochUtcMicros > 0 &&
       (status.clockState == GPS_CLOCK_STATE_PPS_LOCKED ||
@@ -973,6 +990,12 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
   }
   if (status.holdoverUtcValid) {
     holdoverUtcEpoch = formatEpochMicros(status.holdoverEpochUtcMicros);
+  }
+  if (status.microsUtcEpochValid) {
+    microsUtcEpoch = formatEpochMicros(status.microsUtcEpochMicros);
+  }
+  if (status.microsDriftValid) {
+    microsDrift = formatSignedMicros(status.microsDriftMicros);
   }
 
   String cpuText = String(status.cpuUtilizationPercent, 1) + F("% avg / ") +
@@ -1056,6 +1079,10 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
   page += htmlEscape(gpsUtcEpoch);
   page += F("</span></div><div class=\"item\"><span class=\"label\">Holdover UTC <span class=\"unit\">(µs)</span></span><span class=\"value\">");
   page += htmlEscape(holdoverUtcEpoch);
+  page += F("</span></div><div class=\"item\"><span class=\"label\">MICROS_UTC_EPOCH <span class=\"unit\">(µs)</span></span><span class=\"value\">");
+  page += htmlEscape(microsUtcEpoch);
+  page += F("</span></div><div class=\"item\"><span class=\"label\">Drift <span class=\"unit\">(Holdover − MICROS, ms)</span></span><span class=\"value\">");
+  page += htmlEscape(microsDrift);
   page += F("</span></div><div class=\"item\"><span class=\"label\">NTP Ready</span><span class=\"value\">");
   page += status.ntpReady ? F("Yes") : F("No");
   page += F("</span></div>"
