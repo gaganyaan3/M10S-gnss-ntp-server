@@ -81,8 +81,8 @@ const char* clockStateLabel(GpsClockState state) {
   switch (state) {
     case GPS_CLOCK_STATE_CONFIRMED_TIME:
       return "ConfirmedTime";
-    case GPS_CLOCK_STATE_PPS_LOCKED:
-      return "PPSLocked";
+    case GPS_CLOCK_STATE_PPS_ANCHORED:
+      return "PPSAnchored";
     case GPS_CLOCK_STATE_HOLDOVER:
       return "HOLDOVER";
     case GPS_CLOCK_STATE_UNSYNCED:
@@ -118,7 +118,6 @@ void updatePpsMcpwmTicksPerSecondFromCpuTemperature(bool forceLog = false) {
 
 void applyGpsDashboardSettings() {
   gps.enableRawLogging(gpsDashboardSettings.rawLoggingEnabled);
-  gps.enableStats(gpsDashboardSettings.enableStats);
 }
 
 uint64_t extendedMicros() {
@@ -276,10 +275,6 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
     statusOut.navPvtFullyResolved = pvt.fullyResolved;
     statusOut.navPvtConfirmedDate = pvt.confirmedDate;
     statusOut.navPvtConfirmedTime = pvt.confirmedTime;
-  }
-
-  if (!settingsOut.enableStats) {
-    return;
   }
 
   statusOut.latitudeValid = gps.hasLocation();

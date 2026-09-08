@@ -236,11 +236,8 @@ void GnssMaxM10S::poll() {
     if (c == '\n') {
       if (rawLineBufferLength_ > 0) {
         rawLineBuffer_[rawLineBufferLength_] = '\0';
-        // Parse GSA for dilution values
-        // only when stats collection is enabled to avoid unnecessary CPU work.
-        if (statsEnabled_) {
-          parseGsaSentence(rawLineBuffer_);
-        }
+        // Parse GSA for dilution values used by the stats page.
+        parseGsaSentence(rawLineBuffer_);
         if (rawLoggingEnabled_) {
           Serial.print("RAW: ");
           Serial.println(rawLineBuffer_);
@@ -272,10 +269,6 @@ void GnssMaxM10S::poll() {
 
 void GnssMaxM10S::enableRawLogging(bool enable) {
   rawLoggingEnabled_ = enable;
-}
-
-void GnssMaxM10S::enableStats(bool enable) {
-  statsEnabled_ = enable;
 }
 
 void GnssMaxM10S::onRawLine(RawLineCallback callback) {

@@ -90,7 +90,6 @@ class GnssMaxM10S {
   void begin();
   void poll();
   void enableRawLogging(bool enable);
-  void enableStats(bool enable);
   void onRawLine(RawLineCallback callback);
 
   // Provides the PPS edge/clock code with a hardware tick source instead of
@@ -212,7 +211,6 @@ class GnssMaxM10S {
   uint8_t ubxPayload_[kMaxUbxPayloadLength] = {};
 
   bool ubxLoggingEnabled_ = false;
-  bool statsEnabled_ = true;
   bool navPvtLatencyUsValid_ = false;
   uint32_t navPvtLatencyUs_ = 0;
   uint16_t navPvtLatencySamples_ = 0;

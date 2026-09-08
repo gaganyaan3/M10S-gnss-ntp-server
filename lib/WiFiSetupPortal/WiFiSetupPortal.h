@@ -8,14 +8,13 @@
 
 struct GpsDashboardSettings {
   bool rawLoggingEnabled = false;
-  bool enableStats = true;
   bool displayEnabled = true;
 };
 
 enum GpsClockState : uint8_t {
   GPS_CLOCK_STATE_UNSYNCED = 0,
   GPS_CLOCK_STATE_CONFIRMED_TIME = 1,
-  GPS_CLOCK_STATE_PPS_LOCKED = 2,
+  GPS_CLOCK_STATE_PPS_ANCHORED = 2,
   GPS_CLOCK_STATE_HOLDOVER = 3,
 };
 

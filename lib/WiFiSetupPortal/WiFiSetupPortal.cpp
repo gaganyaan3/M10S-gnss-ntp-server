@@ -1,7 +1,6 @@
 #include "WiFiSetupPortal.h"
 
 #include <Preferences.h>
-#include <time.h>
 
 namespace {
 
@@ -33,8 +32,8 @@ String clockStateLabel(GpsClockState state) {
   switch (state) {
     case GPS_CLOCK_STATE_CONFIRMED_TIME:
       return F("ConfirmedTime");
-    case GPS_CLOCK_STATE_PPS_LOCKED:
-      return F("PPSLocked");
+    case GPS_CLOCK_STATE_PPS_ANCHORED:
+      return F("PPSAnchored");
     case GPS_CLOCK_STATE_HOLDOVER:
       return F("HOLDOVER");
     case GPS_CLOCK_STATE_UNSYNCED:
@@ -123,7 +122,7 @@ String clockStateDetail(GpsClockState state) {
   switch (state) {
     case GPS_CLOCK_STATE_CONFIRMED_TIME:
       return F("NAV-PVT date/time is fully resolved and confirmed; serving quick NTP.");
-    case GPS_CLOCK_STATE_PPS_LOCKED:
+    case GPS_CLOCK_STATE_PPS_ANCHORED:
       return F("TIM-TP valid, PPS valid, timer disciplined.");
     case GPS_CLOCK_STATE_HOLDOVER:
       return F("PPS disappeared; running from last disciplined timer.");
@@ -162,17 +161,6 @@ String monRfAgcStatusLabel(const GpsDashboardStatus& status) {
     return String(F("OK:")) + String(agcCnt);
   }
   return String(F("Good:")) + String(agcCnt);
-}
-
-String formatIstFromEpoch(uint32_t epochUtc) {
-  constexpr uint32_t IST_OFFSET_SECONDS = 19800UL;
-  time_t istEpoch = static_cast<time_t>(epochUtc + IST_OFFSET_SECONDS);
-  struct tm tmValue;
-  gmtime_r(&istEpoch, &tmValue);
-
-  char buffer[24];
-  strftime(buffer, sizeof(buffer), "%H:%M:%S %d/%m/%y IST", &tmValue);
-  return String(buffer);
 }
 
 String formatEpochMicros(uint64_t epochUtcMicros) {
@@ -770,12 +758,6 @@ void WiFiSetupPortal::handleStats() {
   GpsDashboardSettings settings;
   GpsDashboardStatus status;
   gpsConfigProvider_(settings, status);
-  if (!settings.enableStats) {
-    // Keep the endpoint effectively disabled when stats collection is off.
-    server_.send(404, "text/plain", "Stats page disabled");
-    return;
-  }
-
   server_.send(200, "text/html", statsPage(status));
 }
 
@@ -790,7 +772,6 @@ void WiFiSetupPortal::handleGpsSave() {
   gpsConfigProvider_(settings, status);
 
   settings.rawLoggingEnabled = server_.hasArg("raw_logging");
-  settings.enableStats = server_.hasArg("enable_stats");
   settings.displayEnabled = server_.hasArg("display_enabled");
 
   if (!gpsConfigSaver_(settings)) {
@@ -975,29 +956,20 @@ String WiFiSetupPortal::wifiNetworkOptionsHtml() const {
 
 String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
                                          const GpsDashboardStatus& status) const {
-  String gpsTime = F("Unavailable");
+  String gpsEpochSeconds;
   String gpsUtcEpoch = F("Unavailable");
   String holdoverUtcEpoch = F("Unavailable");
-  String microsUtcEpoch = F("Waiting for first PPS");
-  String microsDrift = F("Unavailable");
   const bool gpsEpochAvailable =
       status.gpsEpochUtcMicros > 0 &&
-      (status.clockState == GPS_CLOCK_STATE_PPS_LOCKED ||
+      (status.clockState == GPS_CLOCK_STATE_PPS_ANCHORED ||
        status.clockState == GPS_CLOCK_STATE_CONFIRMED_TIME);
   if (gpsEpochAvailable) {
-    gpsTime = formatIstFromEpoch(static_cast<uint32_t>(status.gpsEpochUtcMicros / 1000000ULL));
+    gpsEpochSeconds = String(static_cast<uint32_t>(status.gpsEpochUtcMicros / 1000000ULL));
     gpsUtcEpoch = formatEpochMicros(status.gpsEpochUtcMicros);
   }
   if (status.holdoverUtcValid) {
     holdoverUtcEpoch = formatEpochMicros(status.holdoverEpochUtcMicros);
   }
-  if (status.microsUtcEpochValid) {
-    microsUtcEpoch = formatEpochMicros(status.microsUtcEpochMicros);
-  }
-  if (status.microsDriftValid) {
-    microsDrift = formatSignedMicros(status.microsDriftMicros);
-  }
-
   String cpuText = String(status.cpuUtilizationPercent, 1) + F("% avg / ") +
                    String(status.cpuUtilizationPeakPercent, 1) + F("% peak");
   String temperatureText = F("--");
@@ -1054,9 +1026,7 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
   page += htmlEscape(uptimeText);
   page += F("</div></div></div>");
 
-  if (settings.enableStats) {
-    page += F("<a class=\"action\" href=\"/stats\">Open Stats</a>");
-  }
+  page += F("<a class=\"action\" href=\"/stats\">Open Stats</a>");
 
   page += F("</div><div class=\"card\"><h2>Runtime Status</h2><div class=\"grid\">"
             "<div class=\"item\"><span class=\"label\">PPS</span><span class=\"value\">");
@@ -1073,16 +1043,16 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
   }
   page += F("</span></div><div class=\"item\"><span class=\"label\">Satellites</span><span class=\"value\">");
   page += htmlEscape(satelliteCount);
-  page += F("</span></div><div class=\"item\"><span class=\"label\">GNSS Time (IST)</span><span class=\"value\">");
-  page += htmlEscape(gpsTime);
+  page += F("</span></div><div class=\"item\"><span class=\"label\">GNSS Time (<span id=\"browser-timezone\">UTC</span>)</span><span class=\"value\" id=\"gnss-time-value\" data-epoch-seconds=\"");
+  page += htmlEscape(gpsEpochSeconds);
+  page += F("\">");
+  if (gpsEpochSeconds.isEmpty()) {
+    page += F("Unavailable");
+  }
   page += F("</span></div><div class=\"item\"><span class=\"label\">GNSS UTC Epoch <span class=\"unit\">(µs)</span></span><span class=\"value\">");
   page += htmlEscape(gpsUtcEpoch);
   page += F("</span></div><div class=\"item\"><span class=\"label\">Holdover UTC <span class=\"unit\">(µs)</span></span><span class=\"value\">");
   page += htmlEscape(holdoverUtcEpoch);
-  page += F("</span></div><div class=\"item\"><span class=\"label\">MICROS_UTC_EPOCH <span class=\"unit\">(µs)</span></span><span class=\"value\">");
-  page += htmlEscape(microsUtcEpoch);
-  page += F("</span></div><div class=\"item\"><span class=\"label\">Drift <span class=\"unit\">(Holdover − MICROS, ms)</span></span><span class=\"value\">");
-  page += htmlEscape(microsDrift);
   page += F("</span></div><div class=\"item\"><span class=\"label\">NTP Ready</span><span class=\"value\">");
   page += status.ntpReady ? F("Yes") : F("No");
   page += F("</span></div>"
@@ -1124,12 +1094,6 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
     page += F(" checked");
   }
   page += F("><span><strong>Raw NMEA logging</strong><span>Print every received GNSS sentence to Serial.</span></span></label>"
-            "<label class=\"toggle\"><input type=\"checkbox\" name=\"enable_stats\""
-  );
-  if (settings.enableStats) {
-    page += F(" checked");
-  }
-  page += F("><span><strong>Stats enabled</strong><span>Collect GNSS statistics for the stats page.</span></span></label>"
             "<label class=\"toggle\"><input type=\"checkbox\" name=\"display_enabled\""
   );
   if (settings.displayEnabled) {
@@ -1156,6 +1120,22 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
             "if(remaining<=0){clearInterval(timer);setTimeout(function(){window.location.reload();},1000);return;}"
             "},1000);"
             "}"
+            "var timeValue=document.getElementById('gnss-time-value');"
+            "var timezoneLabel=document.getElementById('browser-timezone');"
+            "if(timeValue&&timeValue.dataset.epochSeconds){"
+            "var timezone='UTC';"
+            "try{var detected=Intl.DateTimeFormat().resolvedOptions().timeZone;"
+            "if(typeof detected==='string'&&detected){timezone=detected;}}catch(e){}"
+            "if(timezoneLabel){timezoneLabel.textContent=timezone;}"
+            "function formatGnssTime(epochSeconds,timeZone){"
+            "var parts=new Intl.DateTimeFormat('en-GB',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false,timeZone:timeZone}).formatToParts(new Date(epochSeconds*1000));"
+            "var values={};parts.forEach(function(part){values[part.type]=part.value;});"
+            "return values.hour+':'+values.minute+':'+values.second+', '+values.day+'/'+values.month+'/'+values.year;"
+            "}"
+            "try{timeValue.textContent=formatGnssTime(Number(timeValue.dataset.epochSeconds),timezone);}"
+            "catch(e){timezone='UTC';if(timezoneLabel){timezoneLabel.textContent=timezone;}"
+            "timeValue.textContent=formatGnssTime(Number(timeValue.dataset.epochSeconds),'UTC');}"
+            "}"
             "var b=document.getElementById('save-banner');"
             "if(window.location.hash==='\\#saved'&&b){"
             "b.style.display='block';"
@@ -1169,6 +1149,15 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
 }
 
 String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
+  String microsUtcEpoch = F("Waiting for first PPS");
+  String microsDrift = F("Unavailable");
+  if (status.microsUtcEpochValid) {
+    microsUtcEpoch = formatEpochMicros(status.microsUtcEpochMicros);
+  }
+  if (status.microsDriftValid) {
+    microsDrift = formatSignedMicros(status.microsDriftMicros);
+  }
+
   String latitudeText = F("--");
   if (status.latitudeValid) {
     latitudeText = String(status.latitude, 6);
@@ -1234,8 +1223,13 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
                   "<div class=\"card\"><h1>Stats</h1>"
                   "<p class=\"lead\">Live navigation snapshot rendered with the GNSS Config Dashboard theme.</p>"
                   "<a class=\"action\" href=\"/gnss\">Back to GNSS Config Dashboard</a>"
-                  "</div><div class=\"card\"><h2>UBX-NAV-PVT</h2><div class=\"grid\">"
-                  "<div class=\"item\"><span class=\"label\">Latitude</span><span class=\"value secret-value\" tabindex=\"0\" role=\"button\" data-value=\"");
+                  "</div><div class=\"card\"><h2>Drift</h2><div class=\"grid\">"
+                  "<div class=\"item\"><span class=\"label\">MICROS_UTC_EPOCH <span class=\"unit\">(µs)</span></span><span class=\"value\">");
+  page += htmlEscape(microsUtcEpoch);
+  page += F("</span></div><div class=\"item\"><span class=\"label\">Drift <span class=\"unit\">(Holdover − MICROS, ms)</span></span><span class=\"value\">");
+  page += htmlEscape(microsDrift);
+  page += F("</span></div></div></div><div class=\"card\"><h2>UBX-NAV-PVT</h2><div class=\"grid\">");
+  page += F("<div class=\"item\"><span class=\"label\">Latitude</span><span class=\"value secret-value\" tabindex=\"0\" role=\"button\" data-value=\"");
   page += htmlEscape(latitudeText);
   page += F("\">***</span></div><div class=\"item\"><span class=\"label\">Longitude</span><span class=\"value secret-value\" tabindex=\"0\" role=\"button\" data-value=\"");
   page += htmlEscape(longitudeText);

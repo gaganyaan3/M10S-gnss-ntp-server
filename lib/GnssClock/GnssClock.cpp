@@ -187,7 +187,7 @@ GpsClockState GnssClock::clockState(const GpsDashboardStatus& status) const {
       status.timTpUtcEpochValid &&
       !status.timTpTpNotLocked &&
       status.ppsAligned) {
-    return GPS_CLOCK_STATE_PPS_LOCKED;
+    return GPS_CLOCK_STATE_PPS_ANCHORED;
   }
 
   if (holdoverPpsDisciplined_ &&

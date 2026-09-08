@@ -7,7 +7,6 @@ namespace {
 constexpr const char* DASHBOARD_PREFS_NAMESPACE = "gnss_dash";
 constexpr const char* DISPLAY_KEY = "display";
 constexpr const char* RAW_LOGGING_KEY = "raw";
-constexpr const char* STATS_KEY = "stats";
 
 }  // namespace
 
@@ -55,15 +54,13 @@ void DashboardStore::loadSettings(GpsDashboardSettings& settingsOut) {
     return;
   }
 
-  if (!prefs.isKey(RAW_LOGGING_KEY) ||
-      !prefs.isKey(STATS_KEY)) {
+  if (!prefs.isKey(RAW_LOGGING_KEY)) {
     prefs.end();
     applyDefaultSettings(settingsOut);
     return;
   }
 
   settingsOut.rawLoggingEnabled = prefs.getBool(RAW_LOGGING_KEY, false);
-  settingsOut.enableStats = prefs.getBool(STATS_KEY, true);
   prefs.end();
 }
 
@@ -77,12 +74,10 @@ bool DashboardStore::saveSettings(const GpsDashboardSettings& settings) {
 
   bool ok = true;
   ok = prefs.putBool(RAW_LOGGING_KEY, settings.rawLoggingEnabled) > 0 && ok;
-  ok = prefs.putBool(STATS_KEY, settings.enableStats) > 0 && ok;
   prefs.end();
   return ok;
 }
 
 void DashboardStore::applyDefaultSettings(GpsDashboardSettings& settingsOut) {
   settingsOut.rawLoggingEnabled = false;
-  settingsOut.enableStats = true;
 }
