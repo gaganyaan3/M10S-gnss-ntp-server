@@ -68,9 +68,9 @@ GpsDashboardSettings gpsDashboardSettings;
 bool holdoverClockValid = false;
 uint32_t holdoverBaseEpochUtc = 0;
 unsigned long holdoverSetAtMs = 0;
-bool microsUtcEpochValid = false;
-uint64_t microsUtcEpochBaseUtcMicros = 0;
-uint64_t microsUtcEpochBaseMicros = 0;
+bool stillUtcEpochValid = false;
+uint64_t stillUtcEpochBaseUtcMicros = 0;
+uint64_t stillUtcEpochBaseMicros = 0;
 uint32_t mcpwmMicrosLast = 0;
 uint64_t mcpwmMicrosHigh = 0;
 bool mcpwmMicrosInitialized = false;
@@ -134,26 +134,26 @@ uint64_t extendedMicros() {
   return mcpwmMicrosHigh | static_cast<uint64_t>(currentMicros);
 }
 
-void anchorMicrosUtcEpochOnFirstPps(uint64_t ppsEpochUtcMicros) {
-  if (microsUtcEpochValid) {
+void anchorStillUtcEpochOnFirstPps(uint64_t ppsEpochUtcMicros) {
+  if (stillUtcEpochValid) {
     return;
   }
 
   const uint64_t nowMicros = extendedMicros();
-  microsUtcEpochBaseUtcMicros = ppsEpochUtcMicros;
-  microsUtcEpochBaseMicros = nowMicros;
-  microsUtcEpochValid = true;
-  Serial.printf("MICROS_UTC_EPOCH anchored: %llu\n",
+  stillUtcEpochBaseUtcMicros = ppsEpochUtcMicros;
+  stillUtcEpochBaseMicros = nowMicros;
+  stillUtcEpochValid = true;
+  Serial.printf("STILL_UTC_EPOCH anchored: %llu\n",
                 static_cast<unsigned long long>(ppsEpochUtcMicros));
 }
 
-uint64_t currentMicrosUtcEpochMicros() {
-  if (!microsUtcEpochValid) {
+uint64_t currentStillUtcEpochMicros() {
+  if (!stillUtcEpochValid) {
     return 0;
   }
   const uint64_t nowMicros = extendedMicros();
-  return microsUtcEpochBaseUtcMicros +
-         (nowMicros - microsUtcEpochBaseMicros);
+  return stillUtcEpochBaseUtcMicros +
+         (nowMicros - stillUtcEpochBaseMicros);
 }
 
 bool saveGpsDashboardSettings(const GpsDashboardSettings& settings) {
@@ -190,9 +190,9 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
     statusOut.gpsEpochUtcMicros = ppsEpochUsUtc;
   }
 
-  statusOut.microsUtcEpochValid = microsUtcEpochValid;
-  if (statusOut.microsUtcEpochValid) {
-    statusOut.microsUtcEpochMicros = currentMicrosUtcEpochMicros();
+  statusOut.stillUtcEpochValid = stillUtcEpochValid;
+  if (statusOut.stillUtcEpochValid) {
+    statusOut.stillUtcEpochMicros = currentStillUtcEpochMicros();
   }
 
   uint64_t epochUsUtc = 0;
@@ -215,11 +215,19 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
     statusOut.holdoverUtcValid = clockDiagnostics.holdoverUtcValid;
     statusOut.holdoverEpochUtcMicros = clockDiagnostics.holdoverEpochUtcMicros;
   }
-  if (statusOut.microsUtcEpochValid && statusOut.holdoverUtcValid) {
-    statusOut.microsDriftValid = true;
-    statusOut.microsDriftMicros =
+  if (statusOut.stillUtcEpochValid && statusOut.holdoverUtcValid) {
+    statusOut.holdoverStillDriftValid = true;
+    statusOut.holdoverStillDriftMicros =
         static_cast<int64_t>(statusOut.holdoverEpochUtcMicros) -
-        static_cast<int64_t>(statusOut.microsUtcEpochMicros);
+        static_cast<int64_t>(statusOut.stillUtcEpochMicros);
+    const uint64_t stillElapsedMicros =
+        statusOut.stillUtcEpochMicros - stillUtcEpochBaseUtcMicros;
+    if (stillElapsedMicros > 0) {
+      statusOut.holdoverStillPpmValid = true;
+      statusOut.holdoverStillPpm =
+          static_cast<double>(statusOut.holdoverStillDriftMicros) * 1000000.0 /
+          static_cast<double>(stillElapsedMicros);
+    }
   }
   statusOut.ntpReady =
       ppsNtpReady ||
@@ -405,7 +413,7 @@ void processPpsCapture() {
   gps.onPpsEdge(pulse.edgeTicks, pulse.elapsedPulses);
   uint64_t ppsEpochUtcMicros = 0;
   if (gps.currentUtcEpochNsPps(ppsEpochUtcMicros)) {
-    anchorMicrosUtcEpochOnFirstPps(ppsEpochUtcMicros / 1000ULL);
+    anchorStillUtcEpochOnFirstPps(ppsEpochUtcMicros / 1000ULL);
   }
   if (gps.ppsRecentlySeen()) {
     lastPpsSeenMs = millis();

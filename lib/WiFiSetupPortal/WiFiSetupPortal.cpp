@@ -188,6 +188,12 @@ String formatSignedMicros(int64_t microsValue) {
   return String(buffer);
 }
 
+String formatSignedPpm(double ppmValue) {
+  char buffer[32];
+  snprintf(buffer, sizeof(buffer), "%+.3f ppm", ppmValue);
+  return String(buffer);
+}
+
 }  // namespace
 
 WiFiSetupPortal::WiFiSetupPortal() : server_(80) {}
@@ -1149,13 +1155,17 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
 }
 
 String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
-  String microsUtcEpoch = F("Waiting for first PPS");
-  String microsDrift = F("Unavailable");
-  if (status.microsUtcEpochValid) {
-    microsUtcEpoch = formatEpochMicros(status.microsUtcEpochMicros);
+  String stillUtcEpoch = F("Waiting for first PPS");
+  String holdoverStillDrift = F("Unavailable");
+  String holdoverStillPpm = F("Unavailable");
+  if (status.stillUtcEpochValid) {
+    stillUtcEpoch = formatEpochMicros(status.stillUtcEpochMicros);
   }
-  if (status.microsDriftValid) {
-    microsDrift = formatSignedMicros(status.microsDriftMicros);
+  if (status.holdoverStillDriftValid) {
+    holdoverStillDrift = formatSignedMicros(status.holdoverStillDriftMicros);
+  }
+  if (status.holdoverStillPpmValid) {
+    holdoverStillPpm = formatSignedPpm(status.holdoverStillPpm);
   }
 
   String latitudeText = F("--");
@@ -1224,10 +1234,12 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
                   "<p class=\"lead\">Live navigation snapshot rendered with the GNSS Config Dashboard theme.</p>"
                   "<a class=\"action\" href=\"/gnss\">Back to GNSS Config Dashboard</a>"
                   "</div><div class=\"card\"><h2>Drift</h2><div class=\"grid\">"
-                  "<div class=\"item\"><span class=\"label\">MICROS_UTC_EPOCH <span class=\"unit\">(µs)</span></span><span class=\"value\">");
-  page += htmlEscape(microsUtcEpoch);
-  page += F("</span></div><div class=\"item\"><span class=\"label\">Drift <span class=\"unit\">(Holdover − MICROS, ms)</span></span><span class=\"value\">");
-  page += htmlEscape(microsDrift);
+                  "<div class=\"item\"><span class=\"label\">STILL_UTC_EPOCH <span class=\"unit\">(µs)</span></span><span class=\"value\">");
+  page += htmlEscape(stillUtcEpoch);
+  page += F("</span></div><div class=\"item\"><span class=\"label\">Drift <span class=\"unit\">(HOLDOVER − STILL, ms)</span></span><span class=\"value\">");
+  page += htmlEscape(holdoverStillDrift);
+  page += F("</span></div><div class=\"item\"><span class=\"label\">PPM Error <span class=\"unit\">(HOLDOVER vs STILL)</span></span><span class=\"value\">");
+  page += htmlEscape(holdoverStillPpm);
   page += F("</span></div></div></div><div class=\"card\"><h2>UBX-NAV-PVT</h2><div class=\"grid\">");
   page += F("<div class=\"item\"><span class=\"label\">Latitude</span><span class=\"value secret-value\" tabindex=\"0\" role=\"button\" data-value=\"");
   page += htmlEscape(latitudeText);

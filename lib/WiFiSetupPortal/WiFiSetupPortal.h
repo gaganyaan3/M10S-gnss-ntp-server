@@ -32,10 +32,12 @@ struct GpsDashboardStatus {
   bool navPvtConfirmedTimeReady = false;
   uint64_t navPvtConfirmedTimeEpochUtcMicros = 0;
   uint64_t gpsEpochUtcMicros = 0;
-  bool microsUtcEpochValid = false;
-  uint64_t microsUtcEpochMicros = 0;
-  bool microsDriftValid = false;
-  int64_t microsDriftMicros = 0;
+  bool stillUtcEpochValid = false;
+  uint64_t stillUtcEpochMicros = 0;
+  bool holdoverStillDriftValid = false;
+  int64_t holdoverStillDriftMicros = 0;
+  bool holdoverStillPpmValid = false;
+  double holdoverStillPpm = 0.0;
   uint32_t correctionUseCount = 0;
   int32_t correctionUs = 0;
   bool monRfValid = false;
