@@ -961,7 +961,7 @@ void GnssMaxM10S::handleUbxFrame(uint8_t messageClass,
     return;
   }
   // if (messageId == UBX_ID_NAV_PVT) {
-  //     Serial.printf("PVT length=%d\n", payloadLength);
+  //     Serial.printf("PVT length=%d\r\n", payloadLength);
 
   //     for (int i = 0; i < payloadLength; i++) {
   //         Serial.printf("%02X ", payload[i]);

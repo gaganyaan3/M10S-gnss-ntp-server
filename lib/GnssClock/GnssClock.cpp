@@ -256,7 +256,7 @@ bool GnssClock::updateCorrection(uint64_t referenceEpochUsUtc,
                           static_cast<int64_t>(referenceEpochUsUtc / 1000ULL);
   const int64_t absDeltaMs = abs64(deltaMs);
   if (absDeltaMs >= kMaxConfirmedTimeCorrectionIgnoreDeltaMs) {
-    Serial.printf("%s correction ignored | deltaMs=%lld thresholdMs=%lld ignoreAtMs=%lld\n",
+  Serial.printf("%s correction ignored | deltaMs=%lld thresholdMs=%lld ignoreAtMs=%lld\r\n",
                   sourceLabel,
                   static_cast<long long>(deltaMs),
                   static_cast<long long>(kMaxConfirmedTimeCorrectionDeltaMs),
@@ -265,7 +265,7 @@ bool GnssClock::updateCorrection(uint64_t referenceEpochUsUtc,
   }
 
   if (absDeltaMs <= kMaxConfirmedTimeCorrectionDeltaMs) {
-    Serial.printf("%s correction skipped | deltaMs=%lld thresholdMs=%lld\n",
+    Serial.printf("%s correction skipped | deltaMs=%lld thresholdMs=%lld\r\n",
                   sourceLabel,
                   static_cast<long long>(deltaMs),
                   static_cast<long long>(kMaxConfirmedTimeCorrectionDeltaMs));
@@ -291,7 +291,7 @@ bool GnssClock::updateCorrection(uint64_t referenceEpochUsUtc,
   epochUsUtcInOut = static_cast<uint64_t>(correctedHoldoverUs);
   ++correctionUseCount_;
   anchorHoldoverRawUs(static_cast<uint64_t>(correctedHoldoverUs));
-  Serial.printf("%s correction applied | deltaMs=%lld correction=%s%ld.%03lldms \n",
+  Serial.printf("%s correction applied | deltaMs=%lld correction=%s%ld.%03lldms \r\n",
                 sourceLabel,
                 static_cast<long long>(deltaMs),
                 correctionUs < 0 ? "-" : "",

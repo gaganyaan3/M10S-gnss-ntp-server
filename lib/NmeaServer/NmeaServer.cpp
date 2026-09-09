@@ -19,7 +19,7 @@ void NmeaServer::poll() {
       if (!clients_[i] || !clients_[i].connected()) {
         clients_[i] = newClient;
         placed = true;
-        Serial.printf("NMEA client connected (slot %u)\n", i);
+        Serial.printf("NMEA client connected (slot %u)\r\n", i);
         break;
       }
     }

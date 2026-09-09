@@ -42,6 +42,9 @@ constexpr uint8_t BOOT_BUTTON_PIN = 0;
 uint32_t PPS_MCPWM_TICKS_PER_SECOND = CalibratedFqMap::DEFAULT_TICKS_PER_SECOND;  // used calibrated MCPWM at 58°C - don't delete this line
 constexpr bool PPS_MCPWM_TEMPERATURE_CALIBRATION_ENABLED = true;
 constexpr uint32_t GNSS_BAUD_RATE = 115200UL;
+constexpr uint8_t PPS_PPM_AVERAGE_SAMPLES = 10;
+constexpr uint64_t PPS_PPM_MIN_PERIOD_MICROS = 900000ULL;
+constexpr uint64_t PPS_PPM_MAX_PERIOD_MICROS = 1100000ULL;
 
 WiFiSetupPortal wifiPortal;
 GnssMaxM10S gps(GNSS_RX_PIN, GNSS_TX_PIN, GNSS_BAUD_RATE);
@@ -71,6 +74,11 @@ unsigned long holdoverSetAtMs = 0;
 bool stillUtcEpochValid = false;
 uint64_t stillUtcEpochBaseUtcMicros = 0;
 uint64_t stillUtcEpochBaseMicros = 0;
+double ppsCpuTempCompPpmSamples[PPS_PPM_AVERAGE_SAMPLES] = {};
+uint8_t ppsCpuTempCompPpmSampleCount = 0;
+uint8_t ppsCpuTempCompPpmSampleIndex = 0;
+bool ppsCpuTempCompPpmValid = false;
+double ppsCpuTempCompPpm = 0.0;
 uint32_t mcpwmMicrosLast = 0;
 uint64_t mcpwmMicrosHigh = 0;
 bool mcpwmMicrosInitialized = false;
@@ -106,12 +114,12 @@ void updatePpsMcpwmTicksPerSecondFromCpuTemperature(bool forceLog = false) {
   ppsCapture.setTicksPerSecond(PPS_MCPWM_TICKS_PER_SECOND);
   gps.setPpsHardwareTicksPerSecond(PPS_MCPWM_TICKS_PER_SECOND);
   if (PPS_MCPWM_TEMPERATURE_CALIBRATION_ENABLED) {
-    Serial.printf("MCPWM calibration: CPU %.1f C -> %.1f C map, %lu Hz\n",
+    Serial.printf("MCPWM calibration: CPU %.1f C -> %.1f C map, %lu Hz\r\n",
                   temperatureC,
                   static_cast<double>(calibration.temperatureDeciC) / 10.0,
                   static_cast<unsigned long>(PPS_MCPWM_TICKS_PER_SECOND));
   } else if (forceLog) {
-    Serial.printf("MCPWM calibration disabled: using default %lu Hz\n",
+    Serial.printf("MCPWM calibration disabled: using default %lu Hz\r\n",
                   static_cast<unsigned long>(PPS_MCPWM_TICKS_PER_SECOND));
   }
 }
@@ -143,7 +151,7 @@ void anchorStillUtcEpochOnFirstPps(uint64_t ppsEpochUtcMicros) {
   stillUtcEpochBaseUtcMicros = ppsEpochUtcMicros;
   stillUtcEpochBaseMicros = nowMicros;
   stillUtcEpochValid = true;
-  Serial.printf("STILL_UTC_EPOCH anchored: %llu\n",
+  Serial.printf("STILL_UTC_EPOCH anchored: %llu\r\n",
                 static_cast<unsigned long long>(ppsEpochUtcMicros));
 }
 
@@ -181,6 +189,10 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
         static_cast<uint32_t>((millis() - lastPpsSeenMs) / 1000UL);
   }
   statusOut.ppsAligned = gps.ppsRecentlySeen();
+  statusOut.ppsCpuTempCompPpmValid = ppsCpuTempCompPpmValid;
+  statusOut.ppsCpuTempCompPpm = ppsCpuTempCompPpm;
+  statusOut.ppsCpuTempCompPpmStale =
+      ppsCpuTempCompPpmValid && !statusOut.ppsAligned;
   statusOut.ppsPeriodValid = statusOut.ppsAligned && ppsCapture.lastPeriodValid();
   statusOut.ppsPeriodSeconds = ppsCapture.lastPeriodSeconds();
 
@@ -344,7 +356,7 @@ void logCpuTemperature(uint32_t nowMs) {
   }
 
   lastCpuTemperatureLogMs = nowMs;
-  Serial.printf("CPU temperature: %.2f C\n", sysHealth.internalTemperatureC());
+  Serial.printf("CPU temperature: %.2f C\r\n", sysHealth.internalTemperatureC());
 }
 
 void beginOtaIfReady() {
@@ -399,7 +411,7 @@ void processBootButton(uint32_t nowMs) {
   gpsDashboardSettings.displayEnabled = !gpsDashboardSettings.displayEnabled;
   oledDisplay.setEnabled(gpsDashboardSettings.displayEnabled);
   dashboardStore.saveDisplayEnabled(gpsDashboardSettings.displayEnabled);
-  Serial.printf("Display %s (BOOT short press: %lums)\n",
+  Serial.printf("Display %s (BOOT short press: %lums)\r\n",
                 oledDisplay.enabled() ? "ON" : "OFF",
                 static_cast<unsigned long>(heldMs));
 }
@@ -418,6 +430,29 @@ void processPpsCapture() {
   if (gps.ppsRecentlySeen()) {
     lastPpsSeenMs = millis();
     lastPpsSeenMsValid = true;
+  }
+  const bool ppsPpmSampleValid =
+      pulse.elapsedPulses == 1 &&
+      pulse.periodMicros >= PPS_PPM_MIN_PERIOD_MICROS &&
+      pulse.periodMicros <= PPS_PPM_MAX_PERIOD_MICROS &&
+      ppsCapture.ticksPerSecond() > 0;
+  if (ppsPpmSampleValid) {
+    ppsCpuTempCompPpmSamples[ppsCpuTempCompPpmSampleIndex] =
+        static_cast<double>(pulse.frequencyDiffTicks) * 1000000.0 /
+        static_cast<double>(ppsCapture.ticksPerSecond());
+    ppsCpuTempCompPpmSampleIndex =
+        (ppsCpuTempCompPpmSampleIndex + 1) % PPS_PPM_AVERAGE_SAMPLES;
+    if (ppsCpuTempCompPpmSampleCount < PPS_PPM_AVERAGE_SAMPLES) {
+      ++ppsCpuTempCompPpmSampleCount;
+    }
+    if (ppsCpuTempCompPpmSampleCount == PPS_PPM_AVERAGE_SAMPLES) {
+      double ppmSum = 0.0;
+      for (uint8_t i = 0; i < PPS_PPM_AVERAGE_SAMPLES; ++i) {
+        ppmSum += ppsCpuTempCompPpmSamples[i];
+      }
+      ppsCpuTempCompPpm = ppmSum / PPS_PPM_AVERAGE_SAMPLES;
+      ppsCpuTempCompPpmValid = true;
+    }
   }
   Serial.printf("PPS pulse #%lu %lu ticks | PPS: %llu us",
                 static_cast<unsigned long>(pulse.pulseCount),
@@ -499,7 +534,7 @@ void updateDisplay(uint32_t nowMs) {
   } else {
     const unsigned long nowLogMs = millis();
     if (nowLogMs - lastGpsStatusLogMs >= 1000UL) {
-      Serial.printf("GNSS waiting... chars: %lu | sats: %lu\n",
+      Serial.printf("GNSS waiting... chars: %lu | sats: %lu\r\n",
                     static_cast<unsigned long>(gps.charsProcessed()),
                     static_cast<unsigned long>(satCount));
       lastGpsStatusLogMs = nowLogMs;
@@ -549,7 +584,7 @@ void setup() {
   updatePpsMcpwmTicksPerSecondFromCpuTemperature(true);
 
   const esp_reset_reason_t resetReason = esp_reset_reason();
-  Serial.printf("Reset reason: %s\n", resetReasonToString(resetReason));
+  Serial.printf("Reset reason: %s\r\n", resetReasonToString(resetReason));
 
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   oledDisplay.begin();
@@ -567,7 +602,7 @@ void setup() {
   bootButton.begin();
   ppsCapture.begin(PPS_PIN);
   gps.configurePpsHardwareClock([]() { return ppsCapture.nowTicks(); }, ppsCapture.ticksPerSecond());
-  Serial.printf("PPS hardware capture enabled on GPIO%d (MCPWM CAP0, %lu Hz)\n",
+  Serial.printf("PPS hardware capture enabled on GPIO%d (MCPWM CAP0, %lu Hz)\r\n",
                 PPS_PIN, static_cast<unsigned long>(ppsCapture.ticksPerSecond()));
 
   uint8_t mac[6] = {0};
@@ -585,12 +620,12 @@ void setup() {
   applyGpsDashboardSettings();
   nmeaServer.setLineTransformer([](const String& line) { return applyPpsTimeToNmeaLine(line); });
   gps.onRawLine([](const String& line) { nmeaServer.broadcastLine(line); });
-  Serial.printf("GNSS serial started at %lu baud on GPIO22/GPIO21\n",
+  Serial.printf("GNSS serial started at %lu baud on GPIO22/GPIO21\r\n",
                 static_cast<unsigned long>(GNSS_BAUD_RATE));
 
   nmeaServer.begin();
-  Serial.printf("NMEA server port:  %u\n", NmeaServer::DEFAULT_PORT);
-  Serial.printf("Setup hotspot SSID (if needed): %s\n", apSsid);
+  Serial.printf("NMEA server port:  %u\r\n", NmeaServer::DEFAULT_PORT);
+  Serial.printf("Setup hotspot SSID (if needed): %s\r\n", apSsid);
 
   ntpServer.setTimeProvider([](uint32_t& epochUtcOut, uint32_t& fractionOut) {
     uint64_t epochUsUtcOut = 0;
@@ -603,7 +638,7 @@ void setup() {
     return true;
   });
   ntpServer.begin();
-  Serial.printf("GNSS-backed NTP port: %u\n", NtpServer::DEFAULT_PORT);
+  Serial.printf("GNSS-backed NTP port: %u\r\n", NtpServer::DEFAULT_PORT);
 }
 
 void loop() {
@@ -626,7 +661,7 @@ void loop() {
   }
 
   if (wifiPortal.consumeCredentialsChanged()) {
-    Serial.printf("WiFi connected. IP: %s\n", wifiPortal.localIP().toString().c_str());
+    Serial.printf("WiFi connected. IP: %s\r\n", wifiPortal.localIP().toString().c_str());
   }
 
   processPpsCapture();

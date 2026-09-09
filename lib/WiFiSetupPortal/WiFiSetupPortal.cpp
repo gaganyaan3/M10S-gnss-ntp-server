@@ -269,7 +269,7 @@ void WiFiSetupPortal::begin() {
 
   if (!connectToWiFi(savedSsid, savedPassword, "saved configuration")) {
     nextReconnectAtMs_ = millis() + WIFI_RETRY_INTERVAL_MS;
-    Serial.printf("Saved Wi-Fi connect failed. Retrying in %lu seconds.\n",
+    Serial.printf("Saved Wi-Fi connect failed. Retrying in %lu seconds.\r\n",
                   static_cast<unsigned long>(WIFI_RETRY_INTERVAL_MS / 1000));
   }
 
@@ -299,8 +299,8 @@ void WiFiSetupPortal::startAccessPoint() {
   Serial.println("========================================");
   Serial.println("SETUP MODE: Wi-Fi Hotspot Active");
   Serial.println("========================================");
-  Serial.printf("Hotspot SSID : %s\n", apSsid_);
-  Serial.printf("Setup URL    : http://%s/\n", WiFi.softAPIP().toString().c_str());
+  Serial.printf("Hotspot SSID : %s\r\n", apSsid_);
+  Serial.printf("Setup URL    : http://%s/\r\n", WiFi.softAPIP().toString().c_str());
   Serial.println("Connect to the hotspot and visit the URL to enter Wi-Fi credentials.");
   Serial.println("========================================");
 }
@@ -372,7 +372,7 @@ void WiFiSetupPortal::checkResetPin() {
   if (resetStartedAt_ == 0) {
     resetStartedAt_ = millis();
     lastResetLogMs_ = resetStartedAt_;
-    Serial.printf("[Reset] Pin pressed — hold for %lus to clear Wi-Fi credentials.\n",
+    Serial.printf("[Reset] Pin pressed — hold for %lus to clear Wi-Fi credentials.\r\n",
                   static_cast<unsigned long>(resetHoldMs_ / 1000));
     return;
   }
@@ -382,7 +382,7 @@ void WiFiSetupPortal::checkResetPin() {
   // Log progress every second while held.
   if (millis() - lastResetLogMs_ >= 1000) {
     lastResetLogMs_ = millis();
-    Serial.printf("[Reset] Holding... %lus / %lus\n",
+    Serial.printf("[Reset] Holding... %lus / %lus\r\n",
                   static_cast<unsigned long>(heldMs / 1000),
                   static_cast<unsigned long>(resetHoldMs_ / 1000));
   }
@@ -439,7 +439,7 @@ void WiFiSetupPortal::loop() {
 
     if (!connectToWiFi(connectedSsid_, connectedPassword_, "retry")) {
       nextReconnectAtMs_ = nowMs + WIFI_RETRY_INTERVAL_MS;
-      Serial.printf("Wi-Fi still disconnected. Next retry in %lu seconds.\n",
+      Serial.printf("Wi-Fi still disconnected. Next retry in %lu seconds.\r\n",
                     static_cast<unsigned long>(WIFI_RETRY_INTERVAL_MS / 1000));
     } else {
       nextReconnectAtMs_ = 0;
@@ -483,9 +483,9 @@ IPAddress WiFiSetupPortal::localIP() const {
 
 bool WiFiSetupPortal::connectToWiFi(const String& ssid, const String& password, const char* source) {
   if (source != nullptr) {
-    Serial.printf("Connecting to Wi-Fi (%s): %s\n", source, ssid.c_str());
+    Serial.printf("Connecting to Wi-Fi (%s): %s\r\n", source, ssid.c_str());
   } else {
-    Serial.printf("Connecting to Wi-Fi: %s\n", ssid.c_str());
+    Serial.printf("Connecting to Wi-Fi: %s\r\n", ssid.c_str());
   }
 
   WiFi.begin(ssid.c_str(), password.c_str());
@@ -499,7 +499,7 @@ bool WiFiSetupPortal::connectToWiFi(const String& ssid, const String& password, 
     delay(500);
   }
 
-  Serial.printf("Wi-Fi connected. IP: %s\n", WiFi.localIP().toString().c_str());
+  Serial.printf("Wi-Fi connected. IP: %s\r\n", WiFi.localIP().toString().c_str());
   return true;
 }
 
@@ -634,11 +634,11 @@ void WiFiSetupPortal::handleConnectSuccess() {
 
   Serial.println("========================================");
   Serial.println("Wi-Fi connected — device ready");
-  Serial.printf("Network    : %s\n", connectedSsid_.c_str());
-  Serial.printf("IP Address : %s\n", ip.c_str());
-  Serial.printf("GNSS time  : ntpdate -q %s\n", ip.c_str());
-  Serial.printf("NMEA stream: tcp://%s:10110\n", ip.c_str());
-  Serial.printf("NTP server : udp %s:123\n", ip.c_str());
+  Serial.printf("Network    : %s\r\n", connectedSsid_.c_str());
+  Serial.printf("IP Address : %s\r\n", ip.c_str());
+  Serial.printf("GNSS time  : ntpdate -q %s\r\n", ip.c_str());
+  Serial.printf("NMEA stream: tcp://%s:10110\r\n", ip.c_str());
+  Serial.printf("NTP server : udp %s:123\r\n", ip.c_str());
   Serial.println("========================================");
 
   String page = F("<!DOCTYPE html><html><head>"
@@ -1158,6 +1158,7 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
   String stillUtcEpoch = F("Waiting for first PPS");
   String holdoverStillDrift = F("Unavailable");
   String holdoverStillPpm = F("Unavailable");
+  String ppsCpuTempCompPpm = F("--");
   if (status.stillUtcEpochValid) {
     stillUtcEpoch = formatEpochMicros(status.stillUtcEpochMicros);
   }
@@ -1166,6 +1167,12 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
   }
   if (status.holdoverStillPpmValid) {
     holdoverStillPpm = formatSignedPpm(status.holdoverStillPpm);
+  }
+  if (status.ppsCpuTempCompPpmValid) {
+    ppsCpuTempCompPpm = formatSignedPpm(status.ppsCpuTempCompPpm);
+    if (status.ppsCpuTempCompPpmStale) {
+      ppsCpuTempCompPpm += F("*");
+    }
   }
 
   String latitudeText = F("--");
@@ -1234,12 +1241,14 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
                   "<p class=\"lead\">Live navigation snapshot rendered with the GNSS Config Dashboard theme.</p>"
                   "<a class=\"action\" href=\"/gnss\">Back to GNSS Config Dashboard</a>"
                   "</div><div class=\"card\"><h2>Drift</h2><div class=\"grid\">"
-                  "<div class=\"item\"><span class=\"label\">STILL_UTC_EPOCH <span class=\"unit\">(µs)</span></span><span class=\"value\">");
+                  "<div class=\"item\"><span class=\"label\">STILL_UTC_EPOCH</span><span class=\"value\">");
   page += htmlEscape(stillUtcEpoch);
-  page += F("</span></div><div class=\"item\"><span class=\"label\">Drift <span class=\"unit\">(HOLDOVER − STILL, ms)</span></span><span class=\"value\">");
+  page += F("</span></div><div class=\"item\"><span class=\"label\">Drift <span class=\"unit\">(HOLDOVER − STILL)</span></span><span class=\"value\">");
   page += htmlEscape(holdoverStillDrift);
   page += F("</span></div><div class=\"item\"><span class=\"label\">PPM Error <span class=\"unit\">(HOLDOVER vs STILL)</span></span><span class=\"value\">");
   page += htmlEscape(holdoverStillPpm);
+  page += F("</span></div><div class=\"item\"><span class=\"label\">PPS_CPU_TEMP_COMP_PPM <span class=\"unit\">(10 s avg)</span></span><span class=\"value\">");
+  page += htmlEscape(ppsCpuTempCompPpm);
   page += F("</span></div></div></div><div class=\"card\"><h2>UBX-NAV-PVT</h2><div class=\"grid\">");
   page += F("<div class=\"item\"><span class=\"label\">Latitude</span><span class=\"value secret-value\" tabindex=\"0\" role=\"button\" data-value=\"");
   page += htmlEscape(latitudeText);

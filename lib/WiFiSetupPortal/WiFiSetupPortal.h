@@ -38,6 +38,9 @@ struct GpsDashboardStatus {
   int64_t holdoverStillDriftMicros = 0;
   bool holdoverStillPpmValid = false;
   double holdoverStillPpm = 0.0;
+  bool ppsCpuTempCompPpmValid = false;
+  double ppsCpuTempCompPpm = 0.0;
+  bool ppsCpuTempCompPpmStale = false;
   uint32_t correctionUseCount = 0;
   int32_t correctionUs = 0;
   bool monRfValid = false;
