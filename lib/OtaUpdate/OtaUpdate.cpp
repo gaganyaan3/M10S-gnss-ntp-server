@@ -33,16 +33,16 @@ void OtaUpdate::begin(const char* hostname, const char* passwordHash) {
     if (total == 0) {
       return;
     }
-    Serial.printf("OTA progress: %u%%\n", progress * 100U / total);
+  Serial.printf("OTA progress: %u%%\r\n", progress * 100U / total);
   });
 
   ArduinoOTA.onError([](ota_error_t error) {
-    Serial.printf("OTA error: %u\n", static_cast<unsigned int>(error));
+  Serial.printf("OTA error: %u\r\n", static_cast<unsigned int>(error));
   });
 
   ArduinoOTA.begin();
   started_ = true;
-  Serial.printf("OTA ready: %s.local\n", hostname);
+  Serial.printf("OTA ready: %s.local\r\n", hostname);
 }
 
 void OtaUpdate::loop() {

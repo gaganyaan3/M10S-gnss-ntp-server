@@ -107,10 +107,10 @@ New time-query API added to `GnssMaxM10S`:
 ConfirmedTime source used for NTP when NAV-PVT has validDate, validTime,
 fullyResolved, and confirmedTime.
 
-NTP source priority is PPSLocked with PPS first, then ConfirmedTime, then valid
+NTP source priority is PPSAnchored with PPS first, then ConfirmedTime, then valid
 holdover.
 
-After a PPSLocked state has anchored holdover, losing PPS enters HOLDOVER and
+After a PPSAnchored state has anchored holdover, losing PPS enters HOLDOVER and
 keeps serving from that PPS-disciplined timestamp for `kHoldoverTimeoutMs`.
 Live ConfirmedTime NAV-PVT data does not shorten that PPS holdover deadline; it
 is only used after PPS holdover expires or when no PPS-disciplined holdover
@@ -268,7 +268,7 @@ UNSYNCED
    ↓
 ConfirmedTime
    ↓
-PPSLocked
+PPSAnchored
    ↓
 HOLDOVER
 ----------------------
@@ -279,7 +279,7 @@ ConfirmedTime
 NAV-PVT validDate, validTime, fullyResolved, and confirmedTime are set.
 NTP serves quick NAV-PVT time while waiting for a GNSS fix and PPS lock.
 
-PPSLocked
+PPSAnchored
 TIM-TP valid.
 PPS valid.
 Timer being disciplined.

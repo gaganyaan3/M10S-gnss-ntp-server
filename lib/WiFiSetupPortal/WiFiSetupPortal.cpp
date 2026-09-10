@@ -1,7 +1,6 @@
 #include "WiFiSetupPortal.h"
 
 #include <Preferences.h>
-#include <time.h>
 
 namespace {
 
@@ -33,8 +32,8 @@ String clockStateLabel(GpsClockState state) {
   switch (state) {
     case GPS_CLOCK_STATE_CONFIRMED_TIME:
       return F("ConfirmedTime");
-    case GPS_CLOCK_STATE_PPS_LOCKED:
-      return F("PPSLocked");
+    case GPS_CLOCK_STATE_PPS_ANCHORED:
+      return F("PPSAnchored");
     case GPS_CLOCK_STATE_HOLDOVER:
       return F("HOLDOVER");
     case GPS_CLOCK_STATE_UNSYNCED:
@@ -123,7 +122,7 @@ String clockStateDetail(GpsClockState state) {
   switch (state) {
     case GPS_CLOCK_STATE_CONFIRMED_TIME:
       return F("NAV-PVT date/time is fully resolved and confirmed; serving quick NTP.");
-    case GPS_CLOCK_STATE_PPS_LOCKED:
+    case GPS_CLOCK_STATE_PPS_ANCHORED:
       return F("TIM-TP valid, PPS valid, timer disciplined.");
     case GPS_CLOCK_STATE_HOLDOVER:
       return F("PPS disappeared; running from last disciplined timer.");
@@ -164,17 +163,6 @@ String monRfAgcStatusLabel(const GpsDashboardStatus& status) {
   return String(F("Good:")) + String(agcCnt);
 }
 
-String formatIstFromEpoch(uint32_t epochUtc) {
-  constexpr uint32_t IST_OFFSET_SECONDS = 19800UL;
-  time_t istEpoch = static_cast<time_t>(epochUtc + IST_OFFSET_SECONDS);
-  struct tm tmValue;
-  gmtime_r(&istEpoch, &tmValue);
-
-  char buffer[24];
-  strftime(buffer, sizeof(buffer), "%H:%M:%S %d/%m/%y IST", &tmValue);
-  return String(buffer);
-}
-
 String formatEpochMicros(uint64_t epochUtcMicros) {
   char buffer[32];
   snprintf(buffer,
@@ -182,6 +170,27 @@ String formatEpochMicros(uint64_t epochUtcMicros) {
            "%llu,%06llu",
            static_cast<unsigned long long>(epochUtcMicros / 1000000ULL),
            static_cast<unsigned long long>(epochUtcMicros % 1000000ULL));
+  return String(buffer);
+}
+
+String formatSignedMicros(int64_t microsValue) {
+  const char sign = microsValue < 0 ? '-' : '+';
+  const uint64_t magnitude = microsValue < 0
+                                 ? static_cast<uint64_t>(-(microsValue + 1)) + 1ULL
+                                 : static_cast<uint64_t>(microsValue);
+  char buffer[40];
+  snprintf(buffer,
+           sizeof(buffer),
+           "%c%llu.%03llu ms",
+           sign,
+           static_cast<unsigned long long>(magnitude / 1000ULL),
+           static_cast<unsigned long long>(magnitude % 1000ULL));
+  return String(buffer);
+}
+
+String formatSignedPpm(double ppmValue) {
+  char buffer[32];
+  snprintf(buffer, sizeof(buffer), "%+.3f ppm", ppmValue);
   return String(buffer);
 }
 
@@ -260,7 +269,7 @@ void WiFiSetupPortal::begin() {
 
   if (!connectToWiFi(savedSsid, savedPassword, "saved configuration")) {
     nextReconnectAtMs_ = millis() + WIFI_RETRY_INTERVAL_MS;
-    Serial.printf("Saved Wi-Fi connect failed. Retrying in %lu seconds.\n",
+    Serial.printf("Saved Wi-Fi connect failed. Retrying in %lu seconds.\r\n",
                   static_cast<unsigned long>(WIFI_RETRY_INTERVAL_MS / 1000));
   }
 
@@ -290,8 +299,8 @@ void WiFiSetupPortal::startAccessPoint() {
   Serial.println("========================================");
   Serial.println("SETUP MODE: Wi-Fi Hotspot Active");
   Serial.println("========================================");
-  Serial.printf("Hotspot SSID : %s\n", apSsid_);
-  Serial.printf("Setup URL    : http://%s/\n", WiFi.softAPIP().toString().c_str());
+  Serial.printf("Hotspot SSID : %s\r\n", apSsid_);
+  Serial.printf("Setup URL    : http://%s/\r\n", WiFi.softAPIP().toString().c_str());
   Serial.println("Connect to the hotspot and visit the URL to enter Wi-Fi credentials.");
   Serial.println("========================================");
 }
@@ -363,7 +372,7 @@ void WiFiSetupPortal::checkResetPin() {
   if (resetStartedAt_ == 0) {
     resetStartedAt_ = millis();
     lastResetLogMs_ = resetStartedAt_;
-    Serial.printf("[Reset] Pin pressed — hold for %lus to clear Wi-Fi credentials.\n",
+    Serial.printf("[Reset] Pin pressed — hold for %lus to clear Wi-Fi credentials.\r\n",
                   static_cast<unsigned long>(resetHoldMs_ / 1000));
     return;
   }
@@ -373,7 +382,7 @@ void WiFiSetupPortal::checkResetPin() {
   // Log progress every second while held.
   if (millis() - lastResetLogMs_ >= 1000) {
     lastResetLogMs_ = millis();
-    Serial.printf("[Reset] Holding... %lus / %lus\n",
+    Serial.printf("[Reset] Holding... %lus / %lus\r\n",
                   static_cast<unsigned long>(heldMs / 1000),
                   static_cast<unsigned long>(resetHoldMs_ / 1000));
   }
@@ -430,7 +439,7 @@ void WiFiSetupPortal::loop() {
 
     if (!connectToWiFi(connectedSsid_, connectedPassword_, "retry")) {
       nextReconnectAtMs_ = nowMs + WIFI_RETRY_INTERVAL_MS;
-      Serial.printf("Wi-Fi still disconnected. Next retry in %lu seconds.\n",
+      Serial.printf("Wi-Fi still disconnected. Next retry in %lu seconds.\r\n",
                     static_cast<unsigned long>(WIFI_RETRY_INTERVAL_MS / 1000));
     } else {
       nextReconnectAtMs_ = 0;
@@ -474,9 +483,9 @@ IPAddress WiFiSetupPortal::localIP() const {
 
 bool WiFiSetupPortal::connectToWiFi(const String& ssid, const String& password, const char* source) {
   if (source != nullptr) {
-    Serial.printf("Connecting to Wi-Fi (%s): %s\n", source, ssid.c_str());
+    Serial.printf("Connecting to Wi-Fi (%s): %s\r\n", source, ssid.c_str());
   } else {
-    Serial.printf("Connecting to Wi-Fi: %s\n", ssid.c_str());
+    Serial.printf("Connecting to Wi-Fi: %s\r\n", ssid.c_str());
   }
 
   WiFi.begin(ssid.c_str(), password.c_str());
@@ -490,7 +499,7 @@ bool WiFiSetupPortal::connectToWiFi(const String& ssid, const String& password, 
     delay(500);
   }
 
-  Serial.printf("Wi-Fi connected. IP: %s\n", WiFi.localIP().toString().c_str());
+  Serial.printf("Wi-Fi connected. IP: %s\r\n", WiFi.localIP().toString().c_str());
   return true;
 }
 
@@ -625,11 +634,11 @@ void WiFiSetupPortal::handleConnectSuccess() {
 
   Serial.println("========================================");
   Serial.println("Wi-Fi connected — device ready");
-  Serial.printf("Network    : %s\n", connectedSsid_.c_str());
-  Serial.printf("IP Address : %s\n", ip.c_str());
-  Serial.printf("GNSS time  : ntpdate -q %s\n", ip.c_str());
-  Serial.printf("NMEA stream: tcp://%s:10110\n", ip.c_str());
-  Serial.printf("NTP server : udp %s:123\n", ip.c_str());
+  Serial.printf("Network    : %s\r\n", connectedSsid_.c_str());
+  Serial.printf("IP Address : %s\r\n", ip.c_str());
+  Serial.printf("GNSS time  : ntpdate -q %s\r\n", ip.c_str());
+  Serial.printf("NMEA stream: tcp://%s:10110\r\n", ip.c_str());
+  Serial.printf("NTP server : udp %s:123\r\n", ip.c_str());
   Serial.println("========================================");
 
   String page = F("<!DOCTYPE html><html><head>"
@@ -755,12 +764,6 @@ void WiFiSetupPortal::handleStats() {
   GpsDashboardSettings settings;
   GpsDashboardStatus status;
   gpsConfigProvider_(settings, status);
-  if (!settings.enableStats) {
-    // Keep the endpoint effectively disabled when stats collection is off.
-    server_.send(404, "text/plain", "Stats page disabled");
-    return;
-  }
-
   server_.send(200, "text/html", statsPage(status));
 }
 
@@ -775,7 +778,6 @@ void WiFiSetupPortal::handleGpsSave() {
   gpsConfigProvider_(settings, status);
 
   settings.rawLoggingEnabled = server_.hasArg("raw_logging");
-  settings.enableStats = server_.hasArg("enable_stats");
   settings.displayEnabled = server_.hasArg("display_enabled");
 
   if (!gpsConfigSaver_(settings)) {
@@ -960,21 +962,20 @@ String WiFiSetupPortal::wifiNetworkOptionsHtml() const {
 
 String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
                                          const GpsDashboardStatus& status) const {
-  String gpsTime = F("Unavailable");
+  String gpsEpochSeconds;
   String gpsUtcEpoch = F("Unavailable");
   String holdoverUtcEpoch = F("Unavailable");
   const bool gpsEpochAvailable =
       status.gpsEpochUtcMicros > 0 &&
-      (status.clockState == GPS_CLOCK_STATE_PPS_LOCKED ||
+      (status.clockState == GPS_CLOCK_STATE_PPS_ANCHORED ||
        status.clockState == GPS_CLOCK_STATE_CONFIRMED_TIME);
   if (gpsEpochAvailable) {
-    gpsTime = formatIstFromEpoch(static_cast<uint32_t>(status.gpsEpochUtcMicros / 1000000ULL));
+    gpsEpochSeconds = String(static_cast<uint32_t>(status.gpsEpochUtcMicros / 1000000ULL));
     gpsUtcEpoch = formatEpochMicros(status.gpsEpochUtcMicros);
   }
   if (status.holdoverUtcValid) {
     holdoverUtcEpoch = formatEpochMicros(status.holdoverEpochUtcMicros);
   }
-
   String cpuText = String(status.cpuUtilizationPercent, 1) + F("% avg / ") +
                    String(status.cpuUtilizationPeakPercent, 1) + F("% peak");
   String temperatureText = F("--");
@@ -1031,9 +1032,7 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
   page += htmlEscape(uptimeText);
   page += F("</div></div></div>");
 
-  if (settings.enableStats) {
-    page += F("<a class=\"action\" href=\"/stats\">Open Stats</a>");
-  }
+  page += F("<a class=\"action\" href=\"/stats\">Open Stats</a>");
 
   page += F("</div><div class=\"card\"><h2>Runtime Status</h2><div class=\"grid\">"
             "<div class=\"item\"><span class=\"label\">PPS</span><span class=\"value\">");
@@ -1050,8 +1049,12 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
   }
   page += F("</span></div><div class=\"item\"><span class=\"label\">Satellites</span><span class=\"value\">");
   page += htmlEscape(satelliteCount);
-  page += F("</span></div><div class=\"item\"><span class=\"label\">GNSS Time (IST)</span><span class=\"value\">");
-  page += htmlEscape(gpsTime);
+  page += F("</span></div><div class=\"item\"><span class=\"label\">GNSS Time (<span id=\"browser-timezone\">UTC</span>)</span><span class=\"value\" id=\"gnss-time-value\" data-epoch-seconds=\"");
+  page += htmlEscape(gpsEpochSeconds);
+  page += F("\">");
+  if (gpsEpochSeconds.isEmpty()) {
+    page += F("Unavailable");
+  }
   page += F("</span></div><div class=\"item\"><span class=\"label\">GNSS UTC Epoch <span class=\"unit\">(µs)</span></span><span class=\"value\">");
   page += htmlEscape(gpsUtcEpoch);
   page += F("</span></div><div class=\"item\"><span class=\"label\">Holdover UTC <span class=\"unit\">(µs)</span></span><span class=\"value\">");
@@ -1097,12 +1100,6 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
     page += F(" checked");
   }
   page += F("><span><strong>Raw NMEA logging</strong><span>Print every received GNSS sentence to Serial.</span></span></label>"
-            "<label class=\"toggle\"><input type=\"checkbox\" name=\"enable_stats\""
-  );
-  if (settings.enableStats) {
-    page += F(" checked");
-  }
-  page += F("><span><strong>Stats enabled</strong><span>Collect GNSS statistics for the stats page.</span></span></label>"
             "<label class=\"toggle\"><input type=\"checkbox\" name=\"display_enabled\""
   );
   if (settings.displayEnabled) {
@@ -1129,6 +1126,22 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
             "if(remaining<=0){clearInterval(timer);setTimeout(function(){window.location.reload();},1000);return;}"
             "},1000);"
             "}"
+            "var timeValue=document.getElementById('gnss-time-value');"
+            "var timezoneLabel=document.getElementById('browser-timezone');"
+            "if(timeValue&&timeValue.dataset.epochSeconds){"
+            "var timezone='UTC';"
+            "try{var detected=Intl.DateTimeFormat().resolvedOptions().timeZone;"
+            "if(typeof detected==='string'&&detected){timezone=detected;}}catch(e){}"
+            "if(timezoneLabel){timezoneLabel.textContent=timezone;}"
+            "function formatGnssTime(epochSeconds,timeZone){"
+            "var parts=new Intl.DateTimeFormat('en-GB',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false,timeZone:timeZone}).formatToParts(new Date(epochSeconds*1000));"
+            "var values={};parts.forEach(function(part){values[part.type]=part.value;});"
+            "return values.hour+':'+values.minute+':'+values.second+', '+values.day+'/'+values.month+'/'+values.year;"
+            "}"
+            "try{timeValue.textContent=formatGnssTime(Number(timeValue.dataset.epochSeconds),timezone);}"
+            "catch(e){timezone='UTC';if(timezoneLabel){timezoneLabel.textContent=timezone;}"
+            "timeValue.textContent=formatGnssTime(Number(timeValue.dataset.epochSeconds),'UTC');}"
+            "}"
             "var b=document.getElementById('save-banner');"
             "if(window.location.hash==='\\#saved'&&b){"
             "b.style.display='block';"
@@ -1142,6 +1155,27 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
 }
 
 String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
+  String stillUtcEpoch = F("Waiting for first PPS");
+  String holdoverUtcEpoch = F("Unavailable");
+  String holdoverStillDrift = F("Unavailable");
+  String holdoverStillPpm = F("Unavailable");
+  if (status.stillUtcEpochValid) {
+    stillUtcEpoch = formatEpochMicros(status.stillUtcEpochMicros);
+  }
+  if (status.holdoverUtcValid) {
+    holdoverUtcEpoch = formatEpochMicros(status.holdoverEpochUtcMicros);
+  }
+  if (status.holdoverStillDriftValid) {
+    holdoverStillDrift = formatSignedMicros(status.holdoverStillDriftMicros);
+  }
+  if (status.holdoverStillPpmValid) {
+    holdoverStillPpm = formatSignedPpm(status.holdoverStillPpm);
+  }
+  String ppsCalculatedPpm = F("--");
+  if (status.ppsCalculatedPpmValid) {
+    ppsCalculatedPpm = formatSignedPpm(status.ppsCalculatedPpm);
+  }
+
   String latitudeText = F("--");
   if (status.latitudeValid) {
     latitudeText = String(status.latitude, 6);
@@ -1207,8 +1241,19 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
                   "<div class=\"card\"><h1>Stats</h1>"
                   "<p class=\"lead\">Live navigation snapshot rendered with the GNSS Config Dashboard theme.</p>"
                   "<a class=\"action\" href=\"/gnss\">Back to GNSS Config Dashboard</a>"
-                  "</div><div class=\"card\"><h2>UBX-NAV-PVT</h2><div class=\"grid\">"
-                  "<div class=\"item\"><span class=\"label\">Latitude</span><span class=\"value secret-value\" tabindex=\"0\" role=\"button\" data-value=\"");
+                  "</div><div class=\"card\"><h2>Drift</h2><div class=\"grid\">"
+                  "<div class=\"item\"><span class=\"label\">Holdover UTC epoch</span><span class=\"value\">");
+  page += htmlEscape(holdoverUtcEpoch);
+  page += F("</span></div><div class=\"item\"><span class=\"label\">STILL_UTC_EPOCH</span><span class=\"value\">");
+  page += htmlEscape(stillUtcEpoch);
+  page += F("</span></div><div class=\"item\"><span class=\"label\">Drift <span class=\"unit\">(HOLDOVER − STILL)</span></span><span class=\"value\">");
+  page += htmlEscape(holdoverStillDrift);
+  page += F("</span></div><div class=\"item\"><span class=\"label\">PPM Error <span class=\"unit\">(HOLDOVER vs STILL)</span></span><span class=\"value\">");
+  page += htmlEscape(holdoverStillPpm);
+  page += F("</span></div><div class=\"item\"><span class=\"label\">PPS_calculated_PPM(30s)</span><span class=\"value\">");
+  page += htmlEscape(ppsCalculatedPpm);
+  page += F("</span></div></div></div><div class=\"card\"><h2>UBX-NAV-PVT</h2><div class=\"grid\">");
+  page += F("<div class=\"item\"><span class=\"label\">Latitude</span><span class=\"value secret-value\" tabindex=\"0\" role=\"button\" data-value=\"");
   page += htmlEscape(latitudeText);
   page += F("\">***</span></div><div class=\"item\"><span class=\"label\">Longitude</span><span class=\"value secret-value\" tabindex=\"0\" role=\"button\" data-value=\"");
   page += htmlEscape(longitudeText);

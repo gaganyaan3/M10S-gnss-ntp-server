@@ -8,14 +8,13 @@
 
 struct GpsDashboardSettings {
   bool rawLoggingEnabled = false;
-  bool enableStats = true;
   bool displayEnabled = true;
 };
 
 enum GpsClockState : uint8_t {
   GPS_CLOCK_STATE_UNSYNCED = 0,
   GPS_CLOCK_STATE_CONFIRMED_TIME = 1,
-  GPS_CLOCK_STATE_PPS_LOCKED = 2,
+  GPS_CLOCK_STATE_PPS_ANCHORED = 2,
   GPS_CLOCK_STATE_HOLDOVER = 3,
 };
 
@@ -33,6 +32,14 @@ struct GpsDashboardStatus {
   bool navPvtConfirmedTimeReady = false;
   uint64_t navPvtConfirmedTimeEpochUtcMicros = 0;
   uint64_t gpsEpochUtcMicros = 0;
+  bool stillUtcEpochValid = false;
+  uint64_t stillUtcEpochMicros = 0;
+  bool holdoverStillDriftValid = false;
+  int64_t holdoverStillDriftMicros = 0;
+  bool holdoverStillPpmValid = false;
+  double holdoverStillPpm = 0.0;
+  bool ppsCalculatedPpmValid = false;
+  double ppsCalculatedPpm = 0.0;
   uint32_t correctionUseCount = 0;
   int32_t correctionUs = 0;
   bool monRfValid = false;
