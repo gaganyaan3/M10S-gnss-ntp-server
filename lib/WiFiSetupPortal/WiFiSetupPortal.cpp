@@ -793,7 +793,56 @@ void WiFiSetupPortal::handleMap() {
     server_.send(503, "text/plain", "Calibration map is not configured");
     return;
   }
-  server_.send(200, "text/html", mapPage());
+  server_.send(200, "text/html", calibratedMapPage());
+}
+
+String WiFiSetupPortal::calibratedMapPage() const {
+  const String current = htmlEscape(cMapProvider_ ? cMapProvider_() : String());
+  const String saved = htmlEscape(savedCMapProvider_ ? savedCMapProvider_() : String());
+  const String status = htmlEscape(cMapStatusProvider_ ? cMapStatusProvider_() : String());
+  const bool enabled = cMapEnabledProvider_ ? cMapEnabledProvider_() : true;
+  const uint32_t threshold = cMapThresholdProvider_ ? cMapThresholdProvider_() : 8UL;
+
+  String page = F("<!DOCTYPE html><html><head>"
+                  "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+                  "<meta charset=\"UTF-8\"><title>Dynamic CpuTemp Calibration FqMap</title>"
+                  "<style>*{box-sizing:border-box;margin:0;padding:0}"
+                  "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;"
+                  "background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);color:#fff;padding:20px}"
+                  ".wrap{max-width:760px;margin:0 auto;display:grid;gap:18px}"
+                  ".card{background:rgba(255,255,255,0.08);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);"
+                  "border:1px solid rgba(255,255,255,0.18);border-radius:18px;padding:24px;box-shadow:0 10px 30px rgba(0,0,0,0.28)}"
+                  "h1{font-size:28px;margin-bottom:14px}h2{font-size:18px;margin-bottom:14px}"
+                  "p{color:rgba(255,255,255,0.78);line-height:1.5;margin-bottom:12px}.current{font-size:15px;font-weight:600;color:#fff}"
+                  "textarea{width:100%;min-height:220px;background:rgba(0,0,0,0.28);color:#fff;border:1px solid rgba(255,255,255,0.25);"
+                  "border-radius:10px;padding:12px;font:14px monospace;resize:vertical}"
+                  "button,.action{display:block;width:100%;padding:12px;margin-top:12px;background:linear-gradient(90deg,#0d6efd,#20c997);"
+                  "color:#fff;border:0;border-radius:10px;text-align:center;text-decoration:none;font-size:14px;font-weight:700;cursor:pointer}"
+                  "label{display:block;color:rgba(255,255,255,0.8);font-size:18px;font-weight:700;margin-bottom:10px}"
+                  "input[type=number]{width:90px;margin-left:6px;padding:8px 10px;background:rgba(255,255,255,0.08);"
+                  "border:1px solid rgba(255,255,255,0.25);border-radius:8px;color:#fff}"
+                  "code{color:#9ee7ff}</style></head><body><div class=\"wrap\">"
+                  "<div class=\"card\"><h1>Dynamic CpuTemp Calibration FqMap</h1>"
+                  "<p>Each newly observed temperature is kept. An identical temperature updates its frequency only when the PPS frequency changes by more than ");
+  page += threshold;
+  page += F(" Hz.</p><form action=\"/map-settings-save\" method=\"POST\"><label><input type=\"checkbox\" name=\"dynamic_calibration\"");
+  if (enabled) page += F(" checked");
+  page += F("> Enable dynamic calibration</label><label>Calibration threshold: <input type=\"number\" name=\"calibration_threshold_hz\" min=\"1\" max=\"999\" maxlength=\"3\" oninput=\"this.value=this.value.slice(0,3)\" value=\"");
+  page += threshold;
+  page += F("\"><button>Save settings</button></form><a class=\"action\" href=\"/stats\">Back to Stats</a></div>"
+            "<div class=\"card\"><h2>Current calibrated map</h2><p class=\"current\">Current: ");
+  page += status;
+  page += F("</p>"
+            "<p>Not being used in calibration. Use one Celsius/frequency entry per line (for example <code>50.0,79999570</code>). Entries define lower-inclusive ranges; below the first entry uses the first frequency.</p>"
+            "<form action=\"/map-save\" method=\"POST\"><textarea name=\"calibrated_map\" spellcheck=\"false\">");
+  page += current;
+  page += F("</textarea><button>Save to NVS</button></form></div>"
+            "<div class=\"card\"><h2>Saved calibrated map (Active)</h2>"
+            "<p>Being Used in calibration. Internal Clock Fq being adjusted based on CpuTemp</p>"
+            "<form action=\"/map-save\" method=\"POST\"><textarea name=\"saved_calibrated_map\" spellcheck=\"false\">");
+  page += saved;
+  page += F("</textarea><button>Save</button></form></div></div></body></html>");
+  return page;
 }
 
 void WiFiSetupPortal::handleMapSave() {
@@ -1324,7 +1373,7 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
                   "<div class=\"card\"><h1>Stats</h1>"
                   "<p class=\"lead\">Live navigation snapshot rendered with the GNSS Config Dashboard theme.</p>"
                   "<a class=\"action\" href=\"/gnss\">Back to GNSS Config Dashboard</a>"
-                  "<a class=\"action\" href=\"/cmap\">MCPWM 80MHz Calibrated FQ Map</a>"
+                  "<a class=\"action\" href=\"/cmap\">CpuTempCalibration</a>"
                   "</div><div class=\"card\"><h2>Drift</h2><div class=\"grid\">"
                   "<div class=\"item\"><span class=\"label\">Holdover UTC epoch</span><span class=\"value\">");
   page += htmlEscape(holdoverUtcEpoch);

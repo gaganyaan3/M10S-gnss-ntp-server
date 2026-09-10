@@ -188,6 +188,7 @@ class WiFiSetupPortal {
   String gpsDashboardPage(const GpsDashboardSettings& settings, const GpsDashboardStatus& status) const;
   String statsPage(const GpsDashboardStatus& status) const;
   String mapPage() const;
+  String calibratedMapPage() const;
 
   WebServer server_;
   DNSServer dnsServer_;

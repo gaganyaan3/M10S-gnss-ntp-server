@@ -686,9 +686,9 @@ void setup() {
       []() { return generatedCalibratedFqMap.serialize(); },
       []() { return savedCalibratedFqMapText; },
       []() {
-        return String(F("MCPWM 80MHz, CpuTemp: ")) +
+        return String(F("CpuTemp: ")) +
                String(sysHealth.internalTemperatureC(), 1) + F(", Fq=") +
-               String(PPS_MCPWM_TICKS_PER_SECOND);
+               String(ppsCapture.ticksPerSecond());
       },
       saveCalibratedFqMap);
   wifiPortal.setDynamicCalibrationCallbacks(
