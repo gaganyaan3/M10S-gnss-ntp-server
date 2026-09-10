@@ -42,7 +42,8 @@ constexpr uint8_t BOOT_BUTTON_PIN = 0;
 uint32_t PPS_MCPWM_TICKS_PER_SECOND = CalibratedFqMap::DEFAULT_TICKS_PER_SECOND;  // used calibrated MCPWM at 58°C - don't delete this line
 constexpr bool PPS_MCPWM_TEMPERATURE_CALIBRATION_ENABLED = true;
 constexpr uint32_t GNSS_BAUD_RATE = 115200UL;
-constexpr uint8_t PPS_PPM_AVERAGE_SAMPLES = 10;
+constexpr uint32_t PPS_MCPWM_DEFAULT_FQ = 80000000UL;
+constexpr uint8_t PPS_CALCULATED_PPM_AVERAGE_SAMPLES = 30;
 constexpr uint64_t PPS_PPM_MIN_PERIOD_MICROS = 900000ULL;
 constexpr uint64_t PPS_PPM_MAX_PERIOD_MICROS = 1100000ULL;
 
@@ -74,11 +75,11 @@ unsigned long holdoverSetAtMs = 0;
 bool stillUtcEpochValid = false;
 uint64_t stillUtcEpochBaseUtcMicros = 0;
 uint64_t stillUtcEpochBaseMicros = 0;
-double ppsCpuTempCompPpmSamples[PPS_PPM_AVERAGE_SAMPLES] = {};
-uint8_t ppsCpuTempCompPpmSampleCount = 0;
-uint8_t ppsCpuTempCompPpmSampleIndex = 0;
-bool ppsCpuTempCompPpmValid = false;
-double ppsCpuTempCompPpm = 0.0;
+bool ppsCalculatedPpmValid = false;
+double ppsCalculatedPpm = 0.0;
+double ppsCalculatedPpmSamples[PPS_CALCULATED_PPM_AVERAGE_SAMPLES] = {};
+uint8_t ppsCalculatedPpmSampleCount = 0;
+uint8_t ppsCalculatedPpmSampleIndex = 0;
 uint32_t mcpwmMicrosLast = 0;
 uint64_t mcpwmMicrosHigh = 0;
 bool mcpwmMicrosInitialized = false;
@@ -189,10 +190,8 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
         static_cast<uint32_t>((millis() - lastPpsSeenMs) / 1000UL);
   }
   statusOut.ppsAligned = gps.ppsRecentlySeen();
-  statusOut.ppsCpuTempCompPpmValid = ppsCpuTempCompPpmValid;
-  statusOut.ppsCpuTempCompPpm = ppsCpuTempCompPpm;
-  statusOut.ppsCpuTempCompPpmStale =
-      ppsCpuTempCompPpmValid && !statusOut.ppsAligned;
+  statusOut.ppsCalculatedPpmValid = ppsCalculatedPpmValid;
+  statusOut.ppsCalculatedPpm = ppsCalculatedPpm;
   statusOut.ppsPeriodValid = statusOut.ppsAligned && ppsCapture.lastPeriodValid();
   statusOut.ppsPeriodSeconds = ppsCapture.lastPeriodSeconds();
 
@@ -437,21 +436,24 @@ void processPpsCapture() {
       pulse.periodMicros <= PPS_PPM_MAX_PERIOD_MICROS &&
       ppsCapture.ticksPerSecond() > 0;
   if (ppsPpmSampleValid) {
-    ppsCpuTempCompPpmSamples[ppsCpuTempCompPpmSampleIndex] =
-        static_cast<double>(pulse.frequencyDiffTicks) * 1000000.0 /
-        static_cast<double>(ppsCapture.ticksPerSecond());
-    ppsCpuTempCompPpmSampleIndex =
-        (ppsCpuTempCompPpmSampleIndex + 1) % PPS_PPM_AVERAGE_SAMPLES;
-    if (ppsCpuTempCompPpmSampleCount < PPS_PPM_AVERAGE_SAMPLES) {
-      ++ppsCpuTempCompPpmSampleCount;
+    const int64_t frequencyDiffTicks =
+        static_cast<int64_t>(PPS_MCPWM_DEFAULT_FQ) -
+        static_cast<int64_t>(pulse.diffTicks);
+    ppsCalculatedPpmSamples[ppsCalculatedPpmSampleIndex] =
+        static_cast<double>(frequencyDiffTicks) * 1000000.0 /
+        static_cast<double>(PPS_MCPWM_DEFAULT_FQ);
+    ppsCalculatedPpmSampleIndex =
+        (ppsCalculatedPpmSampleIndex + 1) % PPS_CALCULATED_PPM_AVERAGE_SAMPLES;
+    if (ppsCalculatedPpmSampleCount < PPS_CALCULATED_PPM_AVERAGE_SAMPLES) {
+      ++ppsCalculatedPpmSampleCount;
     }
-    if (ppsCpuTempCompPpmSampleCount == PPS_PPM_AVERAGE_SAMPLES) {
-      double ppmSum = 0.0;
-      for (uint8_t i = 0; i < PPS_PPM_AVERAGE_SAMPLES; ++i) {
-        ppmSum += ppsCpuTempCompPpmSamples[i];
+    if (ppsCalculatedPpmSampleCount == PPS_CALCULATED_PPM_AVERAGE_SAMPLES) {
+      double calculatedPpmSum = 0.0;
+      for (uint8_t i = 0; i < PPS_CALCULATED_PPM_AVERAGE_SAMPLES; ++i) {
+        calculatedPpmSum += ppsCalculatedPpmSamples[i];
       }
-      ppsCpuTempCompPpm = ppmSum / PPS_PPM_AVERAGE_SAMPLES;
-      ppsCpuTempCompPpmValid = true;
+      ppsCalculatedPpm = calculatedPpmSum / PPS_CALCULATED_PPM_AVERAGE_SAMPLES;
+      ppsCalculatedPpmValid = true;
     }
   }
   Serial.printf("PPS pulse #%lu %lu ticks | PPS: %llu us",

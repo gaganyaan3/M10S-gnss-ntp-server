@@ -1156,11 +1156,14 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
 
 String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
   String stillUtcEpoch = F("Waiting for first PPS");
+  String holdoverUtcEpoch = F("Unavailable");
   String holdoverStillDrift = F("Unavailable");
   String holdoverStillPpm = F("Unavailable");
-  String ppsCpuTempCompPpm = F("--");
   if (status.stillUtcEpochValid) {
     stillUtcEpoch = formatEpochMicros(status.stillUtcEpochMicros);
+  }
+  if (status.holdoverUtcValid) {
+    holdoverUtcEpoch = formatEpochMicros(status.holdoverEpochUtcMicros);
   }
   if (status.holdoverStillDriftValid) {
     holdoverStillDrift = formatSignedMicros(status.holdoverStillDriftMicros);
@@ -1168,11 +1171,9 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
   if (status.holdoverStillPpmValid) {
     holdoverStillPpm = formatSignedPpm(status.holdoverStillPpm);
   }
-  if (status.ppsCpuTempCompPpmValid) {
-    ppsCpuTempCompPpm = formatSignedPpm(status.ppsCpuTempCompPpm);
-    if (status.ppsCpuTempCompPpmStale) {
-      ppsCpuTempCompPpm += F("*");
-    }
+  String ppsCalculatedPpm = F("--");
+  if (status.ppsCalculatedPpmValid) {
+    ppsCalculatedPpm = formatSignedPpm(status.ppsCalculatedPpm);
   }
 
   String latitudeText = F("--");
@@ -1241,14 +1242,16 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
                   "<p class=\"lead\">Live navigation snapshot rendered with the GNSS Config Dashboard theme.</p>"
                   "<a class=\"action\" href=\"/gnss\">Back to GNSS Config Dashboard</a>"
                   "</div><div class=\"card\"><h2>Drift</h2><div class=\"grid\">"
-                  "<div class=\"item\"><span class=\"label\">STILL_UTC_EPOCH</span><span class=\"value\">");
+                  "<div class=\"item\"><span class=\"label\">Holdover UTC epoch</span><span class=\"value\">");
+  page += htmlEscape(holdoverUtcEpoch);
+  page += F("</span></div><div class=\"item\"><span class=\"label\">STILL_UTC_EPOCH</span><span class=\"value\">");
   page += htmlEscape(stillUtcEpoch);
   page += F("</span></div><div class=\"item\"><span class=\"label\">Drift <span class=\"unit\">(HOLDOVER − STILL)</span></span><span class=\"value\">");
   page += htmlEscape(holdoverStillDrift);
   page += F("</span></div><div class=\"item\"><span class=\"label\">PPM Error <span class=\"unit\">(HOLDOVER vs STILL)</span></span><span class=\"value\">");
   page += htmlEscape(holdoverStillPpm);
-  page += F("</span></div><div class=\"item\"><span class=\"label\">PPS_CPU_TEMP_COMP_PPM <span class=\"unit\">(10 s avg)</span></span><span class=\"value\">");
-  page += htmlEscape(ppsCpuTempCompPpm);
+  page += F("</span></div><div class=\"item\"><span class=\"label\">PPS_calculated_PPM(30s)</span><span class=\"value\">");
+  page += htmlEscape(ppsCalculatedPpm);
   page += F("</span></div></div></div><div class=\"card\"><h2>UBX-NAV-PVT</h2><div class=\"grid\">");
   page += F("<div class=\"item\"><span class=\"label\">Latitude</span><span class=\"value secret-value\" tabindex=\"0\" role=\"button\" data-value=\"");
   page += htmlEscape(latitudeText);
