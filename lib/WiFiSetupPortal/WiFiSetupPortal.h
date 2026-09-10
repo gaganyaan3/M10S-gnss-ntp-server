@@ -106,6 +106,11 @@ class WiFiSetupPortal {
  public:
   using GpsConfigProvider = std::function<void(GpsDashboardSettings&, GpsDashboardStatus&)>;
   using GpsConfigSaver = std::function<bool(const GpsDashboardSettings&)>;
+  using CMapProvider = std::function<String()>;
+  using CMapSaver = std::function<bool(const String&)>;
+  using CMapEnabledProvider = std::function<bool()>;
+  using CMapThresholdProvider = std::function<uint32_t()>;
+  using CMapSettingsSaver = std::function<bool(bool, uint32_t)>;
 
   WiFiSetupPortal();
 
@@ -148,6 +153,11 @@ class WiFiSetupPortal {
 
   // Provide current GNSS settings/status and handle GNSS settings saves.
   void setGpsDashboardCallbacks(GpsConfigProvider provider, GpsConfigSaver saver);
+  void setCalibratedMapCallbacks(CMapProvider provider, CMapProvider savedProvider,
+                                 CMapProvider statusProvider, CMapSaver saver);
+  void setDynamicCalibrationCallbacks(CMapEnabledProvider provider,
+                                      CMapThresholdProvider thresholdProvider,
+                                      CMapSettingsSaver saver);
 
  private:
   void startHttpServer();
@@ -166,6 +176,9 @@ class WiFiSetupPortal {
   void handleConnectFailed();
   void handleGpsDashboard();
   void handleStats();
+  void handleMap();
+  void handleMapSave();
+  void handleMapSettingsSave();
   void handleGpsSave();
   void handleNotFound();
   bool connectToWiFi(const String& ssid, const String& password, const char* source = nullptr);
@@ -174,6 +187,7 @@ class WiFiSetupPortal {
   String wifiNetworkOptionsHtml() const;
   String gpsDashboardPage(const GpsDashboardSettings& settings, const GpsDashboardStatus& status) const;
   String statsPage(const GpsDashboardStatus& status) const;
+  String mapPage() const;
 
   WebServer server_;
   DNSServer dnsServer_;
@@ -195,4 +209,11 @@ class WiFiSetupPortal {
   bool httpServerStarted_ = false;
   GpsConfigProvider gpsConfigProvider_;
   GpsConfigSaver gpsConfigSaver_;
+  CMapProvider cMapProvider_;
+  CMapProvider savedCMapProvider_;
+  CMapProvider cMapStatusProvider_;
+  CMapSaver cMapSaver_;
+  CMapEnabledProvider cMapEnabledProvider_;
+  CMapThresholdProvider cMapThresholdProvider_;
+  CMapSettingsSaver cMapSettingsSaver_;
 };

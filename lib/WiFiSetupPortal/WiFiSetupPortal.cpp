@@ -231,6 +231,24 @@ void WiFiSetupPortal::setGpsDashboardCallbacks(GpsConfigProvider provider, GpsCo
   gpsConfigSaver_ = saver;
 }
 
+void WiFiSetupPortal::setCalibratedMapCallbacks(CMapProvider provider,
+                                                CMapProvider savedProvider,
+                                                CMapProvider statusProvider,
+                                                CMapSaver saver) {
+  cMapProvider_ = provider;
+  savedCMapProvider_ = savedProvider;
+  cMapStatusProvider_ = statusProvider;
+  cMapSaver_ = saver;
+}
+
+void WiFiSetupPortal::setDynamicCalibrationCallbacks(CMapEnabledProvider provider,
+                                                     CMapThresholdProvider thresholdProvider,
+                                                     CMapSettingsSaver saver) {
+  cMapEnabledProvider_ = provider;
+  cMapThresholdProvider_ = thresholdProvider;
+  cMapSettingsSaver_ = saver;
+}
+
 void WiFiSetupPortal::startHttpServer() {
   if (httpServerStarted_) {
     return;
@@ -244,6 +262,9 @@ void WiFiSetupPortal::startHttpServer() {
   server_.on("/gnss", HTTP_GET, [this]() { handleGpsDashboard(); });
   server_.on("/stats", HTTP_GET, [this]() { handleStats(); });
   server_.on("/gnss-save", HTTP_POST, [this]() { handleGpsSave(); });
+  server_.on("/cmap", HTTP_GET, [this]() { handleMap(); });
+  server_.on("/map-save", HTTP_POST, [this]() { handleMapSave(); });
+  server_.on("/map-settings-save", HTTP_POST, [this]() { handleMapSettingsSave(); });
   server_.onNotFound([this]() { handleNotFound(); });
   server_.begin();
   httpServerStarted_ = true;
@@ -767,6 +788,68 @@ void WiFiSetupPortal::handleStats() {
   server_.send(200, "text/html", statsPage(status));
 }
 
+void WiFiSetupPortal::handleMap() {
+  if (!cMapProvider_ || !savedCMapProvider_) {
+    server_.send(503, "text/plain", "Calibration map is not configured");
+    return;
+  }
+  server_.send(200, "text/html", mapPage());
+}
+
+void WiFiSetupPortal::handleMapSave() {
+  if (!cMapSaver_) {
+    server_.send(503, "text/plain", "Calibration map is not configured");
+    return;
+  }
+  const String mapText = server_.hasArg("saved_calibrated_map")
+                             ? server_.arg("saved_calibrated_map")
+                             : server_.arg("calibrated_map");
+  if (!cMapSaver_(mapText)) {
+    server_.send(500, "text/plain", "Failed to save calibrated map");
+    return;
+  }
+  server_.sendHeader("Location", "/cmap#saved", true);
+  server_.send(302, "text/plain", "");
+}
+
+void WiFiSetupPortal::handleMapSettingsSave() {
+  if (!cMapSettingsSaver_) {
+    server_.send(503, "text/plain", "Calibration settings are not configured");
+    return;
+  }
+  const long threshold = server_.arg("calibration_threshold_hz").toInt();
+  if (threshold <= 0 || threshold > 999L) {
+    server_.send(400, "text/plain", "Calibration threshold must be between 1 and 999 Hz");
+    return;
+  }
+  if (!cMapSettingsSaver_(server_.hasArg("dynamic_calibration"), static_cast<uint32_t>(threshold))) {
+    server_.send(500, "text/plain", "Failed to save calibration settings");
+    return;
+  }
+  server_.sendHeader("Location", "/cmap#settings-saved", true);
+  server_.send(302, "text/plain", "");
+}
+
+String WiFiSetupPortal::mapPage() const {
+  const String current = htmlEscape(cMapProvider_ ? cMapProvider_() : String());
+  const String saved = htmlEscape(savedCMapProvider_ ? savedCMapProvider_() : String());
+  const String status = htmlEscape(cMapStatusProvider_ ? cMapStatusProvider_() : String());
+  const bool enabled = cMapEnabledProvider_ ? cMapEnabledProvider_() : true;
+  const uint32_t threshold = cMapThresholdProvider_ ? cMapThresholdProvider_() : 8UL;
+  String page = F("<!DOCTYPE html><html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>MCPWM Calibrated FQ Map</title><style>body{font-family:Arial;background:#16213e;color:#fff;padding:20px}main{max-width:760px;margin:auto}.card{background:#ffffff14;border:1px solid #ffffff30;border-radius:14px;padding:20px;margin-bottom:18px}textarea{width:100%;min-height:220px;background:#0005;color:#fff;border:1px solid #ffffff40;padding:10px;font:14px monospace;box-sizing:border-box}button,.action{display:block;width:100%;padding:12px;margin-top:12px;background:#087fce;color:#fff;border:0;border-radius:8px;text-align:center;text-decoration:none;box-sizing:border-box}p{line-height:1.45;color:#ddd}</style></head><body><main><div class=\"card\"><h1>MCPWM 80MHz Calibrated FQ Map</h1><p>Dynamic PPS frequency calibration by CPU temperature.</p><form action=\"/map-settings-save\" method=\"POST\"><label><input type=\"checkbox\" name=\"dynamic_calibration\"");
+  if (enabled) page += F(" checked");
+  page += F("> Enable dynamic calibration</label><p>Update threshold (Hz): <input type=\"number\" name=\"calibration_threshold_hz\" min=\"1\" max=\"999\" value=\"");
+  page += threshold;
+  page += F("\"><button>Save settings</button></form><a class=\"action\" href=\"/stats\">Back to Stats</a></div><div class=\"card\"><h2>Current learned map</h2><p>Current: ");
+  page += status;
+  page += F("</p><form action=\"/map-save\" method=\"POST\"><textarea name=\"calibrated_map\" spellcheck=\"false\">");
+  page += current;
+  page += F("</textarea><button>Save to NVS</button></form></div><div class=\"card\"><h2>Saved active map</h2><form action=\"/map-save\" method=\"POST\"><textarea name=\"saved_calibrated_map\" spellcheck=\"false\">");
+  page += saved;
+  page += F("</textarea><button>Save</button></form></div></main></body></html>");
+  return page;
+}
+
 void WiFiSetupPortal::handleGpsSave() {
   if (!gpsConfigProvider_ || !gpsConfigSaver_) {
     server_.send(503, "text/plain", "GPS dashboard is not configured");
@@ -1241,6 +1324,7 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
                   "<div class=\"card\"><h1>Stats</h1>"
                   "<p class=\"lead\">Live navigation snapshot rendered with the GNSS Config Dashboard theme.</p>"
                   "<a class=\"action\" href=\"/gnss\">Back to GNSS Config Dashboard</a>"
+                  "<a class=\"action\" href=\"/cmap\">MCPWM 80MHz Calibrated FQ Map</a>"
                   "</div><div class=\"card\"><h2>Drift</h2><div class=\"grid\">"
                   "<div class=\"item\"><span class=\"label\">Holdover UTC epoch</span><span class=\"value\">");
   page += htmlEscape(holdoverUtcEpoch);
