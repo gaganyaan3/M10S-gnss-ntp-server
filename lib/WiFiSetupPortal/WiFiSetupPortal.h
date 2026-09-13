@@ -9,6 +9,7 @@
 struct GpsDashboardSettings {
   bool rawLoggingEnabled = false;
   bool displayEnabled = true;
+  bool metricsEnabled = true;
   uint32_t kHoldoverTimeoutMs = 1440UL * 60UL * 1000UL;
   uint32_t kConfirmedTimeHoldoverTimeoutMs = 60UL * 1000UL;
   uint32_t kMaxConfirmedTimeCorrectionDeltaMs = 5UL;
@@ -38,10 +39,13 @@ struct GpsDashboardStatus {
   uint64_t gpsEpochUtcMicros = 0;
   bool stillUtcEpochValid = false;
   uint64_t stillUtcEpochMicros = 0;
+  uint64_t stillElapsedSeconds = 0;
   bool holdoverStillDriftValid = false;
   int64_t holdoverStillDriftMicros = 0;
   bool holdoverStillPpmValid = false;
   double holdoverStillPpm = 0.0;
+  bool ppmValid = false;
+  double ppm = 0.0;
   bool ppsCalculatedPpmValid = false;
   double ppsCalculatedPpm = 0.0;
   uint32_t correctionUseCount = 0;
@@ -92,6 +96,8 @@ struct GpsDashboardStatus {
   float cpuUtilizationPercent = 0.0f;
   float cpuUtilizationPeakPercent = 0.0f;
   float internalTemperatureC = 0.0f;
+  bool mcpwmFrequencyValid = false;
+  uint32_t mcpwmFrequencyHz = 0;
   uint32_t freeHeapBytes = 0;
   uint32_t totalHeapBytes = 0;
   uint64_t uptimeSeconds = 0;
@@ -180,6 +186,7 @@ class WiFiSetupPortal {
   void handleConnectFailed();
   void handleGpsDashboard();
   void handleStats();
+  void handleMetrics();
   void handleMap();
   void handleMapSave();
   void handleMapSettingsSave();

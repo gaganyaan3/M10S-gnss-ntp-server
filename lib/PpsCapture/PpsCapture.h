@@ -26,6 +26,7 @@ class PpsCapture {
   void setTicksPerSecond(uint32_t ticksPerSecond);
   uint32_t pulseCount() const;
   uint32_t ticksPerSecond() const;
+  uint32_t lastMeasuredFrequencyHz() const;
   double lastPeriodSeconds() const;
   bool lastPeriodValid() const;
 
@@ -48,6 +49,7 @@ class PpsCapture {
   uint64_t ticksHigh_ = 0;
   uint32_t lastNowTicks_ = 0;
   bool ticks64Initialized_ = false;
+  uint32_t lastMeasuredFrequencyHz_ = 0;
   double lastPeriodSeconds_ = 0.0;
   bool lastPeriodValid_ = false;
 };

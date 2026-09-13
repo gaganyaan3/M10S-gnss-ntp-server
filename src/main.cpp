@@ -51,6 +51,7 @@ constexpr const char* CALIBRATION_THRESHOLD_KEY = "threshold";
 constexpr uint8_t PPS_CALCULATED_PPM_AVERAGE_SAMPLES = 30;
 constexpr uint64_t PPS_PPM_MIN_PERIOD_MICROS = 900000ULL;
 constexpr uint64_t PPS_PPM_MAX_PERIOD_MICROS = 1100000ULL;
+constexpr uint64_t PPM_MIN_ELAPSED_MICROS = 3600ULL * 1000000ULL;
 
 WiFiSetupPortal wifiPortal;
 GnssMaxM10S gps(GNSS_RX_PIN, GNSS_TX_PIN, GNSS_BAUD_RATE);
@@ -272,6 +273,10 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
   statusOut.stillUtcEpochValid = stillUtcEpochValid;
   if (statusOut.stillUtcEpochValid) {
     statusOut.stillUtcEpochMicros = currentStillUtcEpochMicros();
+    if (statusOut.stillUtcEpochMicros >= stillUtcEpochBaseUtcMicros) {
+      statusOut.stillElapsedSeconds =
+          (statusOut.stillUtcEpochMicros - stillUtcEpochBaseUtcMicros) / 1000000ULL;
+    }
   }
 
   uint64_t epochUsUtc = 0;
@@ -306,6 +311,10 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
       statusOut.holdoverStillPpm =
           static_cast<double>(statusOut.holdoverStillDriftMicros) * 1000000.0 /
           static_cast<double>(stillElapsedMicros);
+      if (stillElapsedMicros >= PPM_MIN_ELAPSED_MICROS) {
+        statusOut.ppmValid = true;
+        statusOut.ppm = statusOut.holdoverStillPpm;
+      }
     }
   }
   statusOut.ntpReady =
@@ -348,6 +357,8 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
   statusOut.cpuUtilizationPercent = health.cpuUtilizationPercent;
   statusOut.cpuUtilizationPeakPercent = health.cpuUtilizationPeakPercent;
   statusOut.internalTemperatureC = health.internalTemperatureC;
+  statusOut.mcpwmFrequencyValid = ppsCapture.lastPeriodValid();
+  statusOut.mcpwmFrequencyHz = ppsCapture.lastMeasuredFrequencyHz();
   statusOut.freeHeapBytes = health.freeHeapBytes;
   statusOut.totalHeapBytes = health.totalHeapBytes;
   statusOut.uptimeSeconds = health.uptimeSeconds;

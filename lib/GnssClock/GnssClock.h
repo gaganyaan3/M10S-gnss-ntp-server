@@ -37,7 +37,7 @@ class GnssClock {
  private:
   static constexpr uint32_t DEFAULT_HOLDOVER_TIMEOUT_MS = 1440UL * 60UL * 1000UL;
   static constexpr uint32_t DEFAULT_CONFIRMED_TIME_HOLDOVER_TIMEOUT_MS = 60UL * 1000UL;
-  static constexpr uint32_t DEFAULT_MAX_CONFIRMED_TIME_CORRECTION_DELTA_MS = 5UL;
+  static constexpr uint32_t DEFAULT_MAX_CONFIRMED_TIME_CORRECTION_DELTA_MS = 10UL;
   static constexpr uint32_t DEFAULT_MAX_CONFIRMED_TIME_CORRECTION_IGNORE_DELTA_MS = 100UL;
 
   uint64_t ppsTicksToUs(uint64_t ticks) const;

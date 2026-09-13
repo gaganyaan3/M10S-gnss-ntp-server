@@ -64,6 +64,7 @@ bool PpsCapture::consumePulse(PpsPulse& pulseOut) {
                                 static_cast<int32_t>(pulseOut.diffTicks);
   pulseOut.periodMicros =
       (static_cast<uint64_t>(pulseOut.diffTicks) * 1000000ULL) / ticksPerSecond_;
+  lastMeasuredFrequencyHz_ = pulseOut.diffTicks;
 
   lastConsumedPulseCount_ = pulseCountSnapshot;
   if (pulseCountSnapshot > 1) {
@@ -91,6 +92,10 @@ uint32_t PpsCapture::pulseCount() const {
 
 uint32_t PpsCapture::ticksPerSecond() const {
   return ticksPerSecond_;
+}
+
+uint32_t PpsCapture::lastMeasuredFrequencyHz() const {
+  return lastMeasuredFrequencyHz_;
 }
 
 double PpsCapture::lastPeriodSeconds() const {

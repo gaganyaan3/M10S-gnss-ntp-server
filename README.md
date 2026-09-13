@@ -339,4 +339,13 @@ pio run -e esp32dev_ota -t upload --upload-port 192.168.10.90
 - [lib/NtpServer/NtpServer.cpp](lib/NtpServer/NtpServer.cpp): NTP server implementation
 - [lib/WiFiSetupPortal/WiFiSetupPortal.h](lib/WiFiSetupPortal/WiFiSetupPortal.h): captive portal + GNSS dashboard interface
 - [lib/WiFiSetupPortal/WiFiSetupPortal.cpp](lib/WiFiSetupPortal/WiFiSetupPortal.cpp): portal, credential storage, dashboard pages
+
+Prometheus/VictoriaMetrics can scrape `GET /metrics`. It exposes `cpu_temp`,
+the latest measured `mcpwm_frequncy`, and `clock_state` (PPS=1, holdover=2, confirmed=3,
+untrusted=4). `PPM` is emitted only after the STILL reference has been
+running for at least one hour and is the average `STILL − HOLDOVER` PPM error.
+Metrics can be enabled or disabled from the `Enable metrics` checkbox in
+Saved Settings on `/gnss`; disabled metrics return 404 from `/metrics`.
+The asterisk shown beside the dashboard PPM Error is removed after one hour
+of STILL reference data.
 - [platformio.ini](platformio.ini): ESP32 PlatformIO environment and dependencies

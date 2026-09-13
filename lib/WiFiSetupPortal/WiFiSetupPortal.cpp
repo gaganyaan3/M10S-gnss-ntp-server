@@ -58,6 +58,20 @@ String clockStateLabel(GpsClockState state) {
   }
 }
 
+int clockStateMetricValue(GpsClockState state) {
+  switch (state) {
+    case GPS_CLOCK_STATE_PPS_ANCHORED:
+      return 1;
+    case GPS_CLOCK_STATE_HOLDOVER:
+      return 2;
+    case GPS_CLOCK_STATE_CONFIRMED_TIME:
+      return 3;
+    case GPS_CLOCK_STATE_UNSYNCED:
+    default:
+      return 4;
+  }
+}
+
 String formatSramUsage(uint32_t freeHeapBytes, uint32_t totalHeapBytes) {
   if (totalHeapBytes == 0) {
     return F("--");
@@ -277,6 +291,7 @@ void WiFiSetupPortal::startHttpServer() {
   server_.on("/connect-failed", HTTP_GET, [this]() { handleConnectFailed(); });
   server_.on("/gnss", HTTP_GET, [this]() { handleGpsDashboard(); });
   server_.on("/stats", HTTP_GET, [this]() { handleStats(); });
+  server_.on("/metrics", HTTP_GET, [this]() { handleMetrics(); });
   server_.on("/gnss-save", HTTP_POST, [this]() { handleGpsSave(); });
   server_.on("/cmap", HTTP_GET, [this]() { handleMap(); });
   server_.on("/map-save", HTTP_POST, [this]() { handleMapSave(); });
@@ -804,6 +819,53 @@ void WiFiSetupPortal::handleStats() {
   server_.send(200, "text/html", statsPage(status));
 }
 
+void WiFiSetupPortal::handleMetrics() {
+  if (!gpsConfigProvider_) {
+    server_.send(503, "text/plain", "GPS metrics are not configured");
+    return;
+  }
+
+  GpsDashboardSettings settings;
+  GpsDashboardStatus status;
+  gpsConfigProvider_(settings, status);
+  if (!settings.metricsEnabled) {
+    server_.send(404, "text/plain", "Metrics disabled");
+    return;
+  }
+
+  String metrics;
+  metrics.reserve(768);
+  metrics += F("# HELP cpu_temp ESP32 internal CPU temperature in degrees Celsius.\n");
+  metrics += F("# TYPE cpu_temp gauge\n");
+  metrics += F("cpu_temp ");
+  metrics += String(status.internalTemperatureC, 2);
+  metrics += '\n';
+
+  if (status.mcpwmFrequencyValid) {
+    metrics += F("# HELP mcpwm_frequncy Latest measured MCPWM PPS clock frequency in hertz.\n");
+    metrics += F("# TYPE mcpwm_frequncy gauge\n");
+    metrics += F("mcpwm_frequncy ");
+    metrics += String(status.mcpwmFrequencyHz);
+    metrics += '\n';
+  }
+
+  metrics += F("# HELP clock_state GNSS clock trust state: PPS=1, holdover=2, confirmed=3, untrusted=4.\n");
+  metrics += F("# TYPE clock_state gauge\n");
+  metrics += F("clock_state ");
+  metrics += String(clockStateMetricValue(status.clockState));
+  metrics += '\n';
+
+  if (status.ppmValid) {
+    metrics += F("# HELP PPM Average PPM error (STILL minus HOLDOVER) after at least one hour.\n");
+    metrics += F("# TYPE PPM gauge\n");
+    metrics += F("PPM ");
+    metrics += String(status.ppm, 6);
+    metrics += '\n';
+  }
+
+  server_.send(200, "text/plain; version=0.0.4; charset=utf-8", metrics);
+}
+
 void WiFiSetupPortal::handleMap() {
   if (!cMapProvider_ || !savedCMapProvider_) {
     server_.send(503, "text/plain", "Calibration map is not configured");
@@ -927,6 +989,7 @@ void WiFiSetupPortal::handleGpsSave() {
 
   settings.rawLoggingEnabled = server_.hasArg("raw_logging");
   settings.displayEnabled = server_.hasArg("display_enabled");
+  settings.metricsEnabled = server_.hasArg("metrics_enabled");
   uint32_t holdoverTimeoutMinutes = 0;
   uint32_t confirmedTimeHoldoverTimeoutMinutes = 0;
   if (!parseUnsignedSetting(server_.arg("kHoldoverTimeoutMs"), holdoverTimeoutMinutes) ||
@@ -1275,6 +1338,12 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
     page += F(" checked");
   }
   page += F("><span><strong>Display enabled</strong><span>Turn the OLED display on or off.</span></span></label>"
+            "<label class=\"toggle\"><input type=\"checkbox\" name=\"metrics_enabled\""
+  );
+  if (settings.metricsEnabled) {
+    page += F(" checked");
+  }
+  page += F("><span><strong>Enable metrics</strong><span>Expose Prometheus metrics at /metrics.</span></span></label>"
             "<label class=\"setting\"><span><strong>kHoldoverTimeoutMs</strong><span>Maximum PPS-disciplined holdover duration.</span></span>"
             "<span class=\"setting-control\"><input type=\"number\" name=\"kHoldoverTimeoutMs\" min=\"1\" max=\"71582\" maxlength=\"5\" oninput=\"this.value=this.value.slice(0,5)\" step=\"1\" value=\"");
   page += htmlEscape(String(settings.kHoldoverTimeoutMs / 60000UL));
@@ -1354,7 +1423,10 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
     holdoverStillDrift = formatSignedMicros(status.holdoverStillDriftMicros);
   }
   if (status.holdoverStillPpmValid) {
-    holdoverStillPpm = formatSignedPpm(status.holdoverStillPpm) + F("*");
+    holdoverStillPpm = formatSignedPpm(status.holdoverStillPpm);
+    if (status.stillElapsedSeconds < 60ULL * 60ULL) {
+      holdoverStillPpm += F("*");
+    }
   }
   String ppsCalculatedPpm = F("--");
   if (status.ppsCalculatedPpmValid) {
