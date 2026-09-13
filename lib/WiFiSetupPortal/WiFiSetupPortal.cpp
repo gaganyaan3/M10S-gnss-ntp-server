@@ -1,6 +1,7 @@
 #include "WiFiSetupPortal.h"
 
 #include <Preferences.h>
+#include <cstdlib>
 
 namespace {
 
@@ -22,6 +23,21 @@ String htmlEscape(const String& input) {
     else out += c;
   }
   return out;
+}
+
+bool parseUnsignedSetting(const String& value, uint32_t& output) {
+  if (value.isEmpty()) return false;
+  char* end = nullptr;
+  const unsigned long parsed = strtoul(value.c_str(), &end, 10);
+  if (*end != '\0' || parsed > 99999UL) return false;
+  output = static_cast<uint32_t>(parsed);
+  return true;
+}
+
+bool minutesToMilliseconds(uint32_t minutes, uint32_t& milliseconds) {
+  if (minutes == 0 || minutes > (0xFFFFFFFFUL / 60000UL)) return false;
+  milliseconds = minutes * 60000UL;
+  return true;
 }
 
 String yesNoLabel(bool value) {
@@ -231,6 +247,24 @@ void WiFiSetupPortal::setGpsDashboardCallbacks(GpsConfigProvider provider, GpsCo
   gpsConfigSaver_ = saver;
 }
 
+void WiFiSetupPortal::setCalibratedMapCallbacks(CMapProvider provider,
+                                                CMapProvider savedProvider,
+                                                CMapProvider statusProvider,
+                                                CMapSaver saver) {
+  cMapProvider_ = provider;
+  savedCMapProvider_ = savedProvider;
+  cMapStatusProvider_ = statusProvider;
+  cMapSaver_ = saver;
+}
+
+void WiFiSetupPortal::setDynamicCalibrationCallbacks(CMapEnabledProvider provider,
+                                                     CMapThresholdProvider thresholdProvider,
+                                                     CMapSettingsSaver saver) {
+  cMapEnabledProvider_ = provider;
+  cMapThresholdProvider_ = thresholdProvider;
+  cMapSettingsSaver_ = saver;
+}
+
 void WiFiSetupPortal::startHttpServer() {
   if (httpServerStarted_) {
     return;
@@ -244,6 +278,9 @@ void WiFiSetupPortal::startHttpServer() {
   server_.on("/gnss", HTTP_GET, [this]() { handleGpsDashboard(); });
   server_.on("/stats", HTTP_GET, [this]() { handleStats(); });
   server_.on("/gnss-save", HTTP_POST, [this]() { handleGpsSave(); });
+  server_.on("/cmap", HTTP_GET, [this]() { handleMap(); });
+  server_.on("/map-save", HTTP_POST, [this]() { handleMapSave(); });
+  server_.on("/map-settings-save", HTTP_POST, [this]() { handleMapSettingsSave(); });
   server_.onNotFound([this]() { handleNotFound(); });
   server_.begin();
   httpServerStarted_ = true;
@@ -767,6 +804,117 @@ void WiFiSetupPortal::handleStats() {
   server_.send(200, "text/html", statsPage(status));
 }
 
+void WiFiSetupPortal::handleMap() {
+  if (!cMapProvider_ || !savedCMapProvider_) {
+    server_.send(503, "text/plain", "Calibration map is not configured");
+    return;
+  }
+  server_.send(200, "text/html", calibratedMapPage());
+}
+
+String WiFiSetupPortal::calibratedMapPage() const {
+  const String current = htmlEscape(cMapProvider_ ? cMapProvider_() : String());
+  const String saved = htmlEscape(savedCMapProvider_ ? savedCMapProvider_() : String());
+  const String status = htmlEscape(cMapStatusProvider_ ? cMapStatusProvider_() : String());
+  const bool enabled = cMapEnabledProvider_ ? cMapEnabledProvider_() : true;
+  const uint32_t threshold = cMapThresholdProvider_ ? cMapThresholdProvider_() : 8UL;
+
+  String page = F("<!DOCTYPE html><html><head>"
+                  "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+                  "<meta charset=\"UTF-8\"><title>Dynamic CpuTemp Calibration FqMap</title>"
+                  "<style>*{box-sizing:border-box;margin:0;padding:0}"
+                  "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;"
+                  "background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);color:#fff;padding:20px}"
+                  ".wrap{max-width:760px;margin:0 auto;display:grid;gap:18px}"
+                  ".card{background:rgba(255,255,255,0.08);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);"
+                  "border:1px solid rgba(255,255,255,0.18);border-radius:18px;padding:24px;box-shadow:0 10px 30px rgba(0,0,0,0.28)}"
+                  "h1{font-size:28px;margin-bottom:14px}h2{font-size:18px;margin-bottom:14px}"
+                  "p{color:rgba(255,255,255,0.78);line-height:1.5;margin-bottom:12px}.current{font-size:15px;font-weight:600;color:#fff}"
+                  "textarea{width:100%;min-height:220px;background:rgba(0,0,0,0.28);color:#fff;border:1px solid rgba(255,255,255,0.25);"
+                  "border-radius:10px;padding:12px;font:14px monospace;resize:vertical}"
+                  "button,.action{display:block;width:100%;padding:12px;margin-top:12px;background:linear-gradient(90deg,#0d6efd,#20c997);"
+                  "color:#fff;border:0;border-radius:10px;text-align:center;text-decoration:none;font:inherit;font-size:14px;font-weight:700;cursor:pointer}"
+                  "label{display:block;color:rgba(255,255,255,0.8);font-size:18px;font-weight:700;margin-bottom:10px}"
+                  "input[type=number]{width:90px;margin-left:6px;padding:8px 10px;background:rgba(255,255,255,0.08);"
+                  "border:1px solid rgba(255,255,255,0.25);border-radius:8px;color:#fff}"
+                  "code{color:#9ee7ff}</style></head><body><div class=\"wrap\">"
+                  "<div class=\"card\"><h1>Dynamic CpuTemp Calibration FqMap</h1>"
+                  "<p>Each newly observed temperature is kept. An identical temperature updates its frequency only when the PPS frequency changes by more than ");
+  page += threshold;
+  page += F(" Hz.</p><form action=\"/map-settings-save\" method=\"POST\"><label><input type=\"checkbox\" name=\"dynamic_calibration\"");
+  if (enabled) page += F(" checked");
+  page += F("> Enable dynamic calibration</label><label>Calibration threshold: <input type=\"number\" name=\"calibration_threshold_hz\" min=\"1\" max=\"999\" maxlength=\"3\" oninput=\"this.value=this.value.slice(0,3)\" value=\"");
+  page += threshold;
+  page += F("\"><button>Save settings</button></form><a class=\"action\" href=\"/stats\">Back to Stats</a></div>"
+            "<div class=\"card\"><h2>Current calibrated map</h2><p class=\"current\">Current: ");
+  page += status;
+  page += F("</p>"
+            "<p>Not being used in calibration. Use one Celsius/frequency entry per line (for example <code>50.0,79999570</code>). Entries define lower-inclusive ranges; below the first entry uses the first frequency.</p>"
+            "<form action=\"/map-save\" method=\"POST\"><textarea name=\"calibrated_map\" spellcheck=\"false\">");
+  page += current;
+  page += F("</textarea><button>Save calibrated map to storage</button></form></div>"
+            "<div class=\"card\"><h2>Saved calibrated map (Active)</h2>"
+            "<p>Being Used in calibration. Internal Clock Fq being adjusted based on CpuTemp</p>"
+            "<form action=\"/map-save\" method=\"POST\"><textarea name=\"saved_calibrated_map\" spellcheck=\"false\">");
+  page += saved;
+  page += F("</textarea><button>Save</button></form></div></div></body></html>");
+  return page;
+}
+
+void WiFiSetupPortal::handleMapSave() {
+  if (!cMapSaver_) {
+    server_.send(503, "text/plain", "Calibration map is not configured");
+    return;
+  }
+  const String mapText = server_.hasArg("saved_calibrated_map")
+                             ? server_.arg("saved_calibrated_map")
+                             : server_.arg("calibrated_map");
+  if (!cMapSaver_(mapText)) {
+    server_.send(500, "text/plain", "Failed to save calibrated map");
+    return;
+  }
+  server_.sendHeader("Location", "/cmap#saved", true);
+  server_.send(302, "text/plain", "");
+}
+
+void WiFiSetupPortal::handleMapSettingsSave() {
+  if (!cMapSettingsSaver_) {
+    server_.send(503, "text/plain", "Calibration settings are not configured");
+    return;
+  }
+  const long threshold = server_.arg("calibration_threshold_hz").toInt();
+  if (threshold <= 0 || threshold > 999L) {
+    server_.send(400, "text/plain", "Calibration threshold must be between 1 and 999 Hz");
+    return;
+  }
+  if (!cMapSettingsSaver_(server_.hasArg("dynamic_calibration"), static_cast<uint32_t>(threshold))) {
+    server_.send(500, "text/plain", "Failed to save calibration settings");
+    return;
+  }
+  server_.sendHeader("Location", "/cmap#settings-saved", true);
+  server_.send(302, "text/plain", "");
+}
+
+String WiFiSetupPortal::mapPage() const {
+  const String current = htmlEscape(cMapProvider_ ? cMapProvider_() : String());
+  const String saved = htmlEscape(savedCMapProvider_ ? savedCMapProvider_() : String());
+  const String status = htmlEscape(cMapStatusProvider_ ? cMapStatusProvider_() : String());
+  const bool enabled = cMapEnabledProvider_ ? cMapEnabledProvider_() : true;
+  const uint32_t threshold = cMapThresholdProvider_ ? cMapThresholdProvider_() : 8UL;
+  String page = F("<!DOCTYPE html><html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>MCPWM Calibrated FQ Map</title><style>body{font-family:Arial;background:#16213e;color:#fff;padding:20px}main{max-width:760px;margin:auto}.card{background:#ffffff14;border:1px solid #ffffff30;border-radius:14px;padding:20px;margin-bottom:18px}textarea{width:100%;min-height:220px;background:#0005;color:#fff;border:1px solid #ffffff40;padding:10px;font:14px monospace;box-sizing:border-box}button,.action{display:block;width:100%;padding:12px;margin-top:12px;background:#087fce;color:#fff;border:0;border-radius:8px;text-align:center;text-decoration:none;font:inherit;box-sizing:border-box}p{line-height:1.45;color:#ddd}</style></head><body><main><div class=\"card\"><h1>MCPWM 80MHz Calibrated FQ Map</h1><p>Dynamic PPS frequency calibration by CPU temperature.</p><form action=\"/map-settings-save\" method=\"POST\"><label><input type=\"checkbox\" name=\"dynamic_calibration\"");
+  if (enabled) page += F(" checked");
+  page += F("> Enable dynamic calibration</label><p>Update threshold (Hz): <input type=\"number\" name=\"calibration_threshold_hz\" min=\"1\" max=\"999\" value=\"");
+  page += threshold;
+  page += F("\"><button>Save settings</button></form><a class=\"action\" href=\"/stats\">Back to Stats</a></div><div class=\"card\"><h2>Current learned map</h2><p>Current: ");
+  page += status;
+  page += F("</p><form action=\"/map-save\" method=\"POST\"><textarea name=\"calibrated_map\" spellcheck=\"false\">");
+  page += current;
+  page += F("</textarea><button>Save to NVS</button></form></div><div class=\"card\"><h2>Saved active map</h2><form action=\"/map-save\" method=\"POST\"><textarea name=\"saved_calibrated_map\" spellcheck=\"false\">");
+  page += saved;
+  page += F("</textarea><button>Save</button></form></div></main></body></html>");
+  return page;
+}
+
 void WiFiSetupPortal::handleGpsSave() {
   if (!gpsConfigProvider_ || !gpsConfigSaver_) {
     server_.send(503, "text/plain", "GPS dashboard is not configured");
@@ -779,6 +927,21 @@ void WiFiSetupPortal::handleGpsSave() {
 
   settings.rawLoggingEnabled = server_.hasArg("raw_logging");
   settings.displayEnabled = server_.hasArg("display_enabled");
+  uint32_t holdoverTimeoutMinutes = 0;
+  uint32_t confirmedTimeHoldoverTimeoutMinutes = 0;
+  if (!parseUnsignedSetting(server_.arg("kHoldoverTimeoutMs"), holdoverTimeoutMinutes) ||
+      !minutesToMilliseconds(holdoverTimeoutMinutes, settings.kHoldoverTimeoutMs) ||
+      !parseUnsignedSetting(server_.arg("kConfirmedTimeHoldoverTimeoutMs"),
+                            confirmedTimeHoldoverTimeoutMinutes) ||
+      !minutesToMilliseconds(confirmedTimeHoldoverTimeoutMinutes,
+                             settings.kConfirmedTimeHoldoverTimeoutMs) ||
+      !parseUnsignedSetting(server_.arg("kMaxConfirmedTimeCorrectionDeltaMs"),
+                            settings.kMaxConfirmedTimeCorrectionDeltaMs) ||
+      !parseUnsignedSetting(server_.arg("kMaxConfirmedTimeCorrectionIgnoreDeltaMs"),
+                            settings.kMaxConfirmedTimeCorrectionIgnoreDeltaMs)) {
+    server_.send(400, "text/plain", "Invalid GNSS clock setting");
+    return;
+  }
 
   if (!gpsConfigSaver_(settings)) {
     server_.send(500, "text/plain", "Failed to save GNSS settings");
@@ -1016,6 +1179,12 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
                   ".toggle input{margin-top:4px;transform:scale(1.2)}"
                   ".toggle strong{display:block;margin-bottom:4px}"
                   ".toggle span{display:block;color:rgba(255,255,255,0.68);font-size:14px;line-height:1.4}"
+                  ".setting{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;background:rgba(255,255,255,0.05);border-radius:12px;padding:14px}"
+                  ".setting strong{display:block;margin-bottom:4px}"
+                  ".setting span span{display:block;color:rgba(255,255,255,0.68);font-size:14px;line-height:1.4}"
+                  ".setting-control{display:flex;align-items:center;gap:8px}"
+                  ".setting input{width:90px;padding:9px 10px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.25);border-radius:8px;color:#fff}"
+                  ".setting .unit{color:rgba(255,255,255,0.72);font-size:14px;white-space:nowrap}"
                   "button{width:100%;padding:13px 16px;font-size:16px;font-weight:700;border:none;border-radius:10px;color:#fff;cursor:pointer;"
                     "background:linear-gradient(90deg,#0d6efd,#20c997);box-shadow:0 4px 14px rgba(13,110,253,0.35)}"
                   "a.action{display:inline-block;margin-top:14px;padding:10px 14px;font-size:14px;font-weight:700;text-decoration:none;color:#fff;"
@@ -1035,7 +1204,7 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
   page += F("<a class=\"action\" href=\"/stats\">Open Stats</a>");
 
   page += F("</div><div class=\"card\"><h2>Runtime Status</h2><div class=\"grid\">"
-            "<div class=\"item\"><span class=\"label\">PPS</span><span class=\"value\">");
+            "<div class=\"item\"><span class=\"label\">Calibrated PPS</span><span class=\"value\">");
   if (status.ppsAligned && status.ppsPeriodValid) {
     char ppsBuf[20];
     snprintf(ppsBuf, sizeof(ppsBuf), "%.9f", status.ppsPeriodSeconds);
@@ -1106,6 +1275,22 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
     page += F(" checked");
   }
   page += F("><span><strong>Display enabled</strong><span>Turn the OLED display on or off.</span></span></label>"
+            "<label class=\"setting\"><span><strong>kHoldoverTimeoutMs</strong><span>Maximum PPS-disciplined holdover duration.</span></span>"
+            "<span class=\"setting-control\"><input type=\"number\" name=\"kHoldoverTimeoutMs\" min=\"1\" max=\"71582\" maxlength=\"5\" oninput=\"this.value=this.value.slice(0,5)\" step=\"1\" value=\"");
+  page += htmlEscape(String(settings.kHoldoverTimeoutMs / 60000UL));
+  page += F("\"><span class=\"unit\">min</span></span></label>"
+            "<label class=\"setting\"><span><strong>kConfirmedTimeHoldoverTimeoutMs</strong><span>ConfirmedTime holdover duration.</span></span>"
+            "<span class=\"setting-control\"><input type=\"number\" name=\"kConfirmedTimeHoldoverTimeoutMs\" min=\"1\" max=\"71582\" maxlength=\"5\" oninput=\"this.value=this.value.slice(0,5)\" step=\"1\" value=\"");
+  page += htmlEscape(String(settings.kConfirmedTimeHoldoverTimeoutMs / 60000UL));
+  page += F("\"><span class=\"unit\">min</span></span></label>"
+            "<label class=\"setting\"><span><strong>kMaxConfirmedTimeCorrectionDeltaMs</strong><span>Correction is skipped at or below this delta.</span></span>"
+            "<span class=\"setting-control\"><input type=\"number\" name=\"kMaxConfirmedTimeCorrectionDeltaMs\" min=\"0\" max=\"99999\" maxlength=\"5\" oninput=\"this.value=this.value.slice(0,5)\" step=\"1\" value=\"");
+  page += htmlEscape(String(settings.kMaxConfirmedTimeCorrectionDeltaMs));
+  page += F("\"><span class=\"unit\">ms</span></span></label>"
+            "<label class=\"setting\"><span><strong>kMaxConfirmedTimeCorrectionIgnoreDeltaMs</strong><span>Correction is ignored at or above this delta.</span></span>"
+            "<span class=\"setting-control\"><input type=\"number\" name=\"kMaxConfirmedTimeCorrectionIgnoreDeltaMs\" min=\"1\" max=\"99999\" maxlength=\"5\" oninput=\"this.value=this.value.slice(0,5)\" step=\"1\" value=\"");
+  page += htmlEscape(String(settings.kMaxConfirmedTimeCorrectionIgnoreDeltaMs));
+  page += F("\"><span class=\"unit\">ms</span></span></label>"
             "<button type=\"submit\">Save</button>"
             "<div class=\"banner\" id=\"save-banner\" style=\"display:none\">GPS settings saved to NVS.</div>"
             "<script>(function(){"
@@ -1169,7 +1354,7 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
     holdoverStillDrift = formatSignedMicros(status.holdoverStillDriftMicros);
   }
   if (status.holdoverStillPpmValid) {
-    holdoverStillPpm = formatSignedPpm(status.holdoverStillPpm);
+    holdoverStillPpm = formatSignedPpm(status.holdoverStillPpm) + F("*");
   }
   String ppsCalculatedPpm = F("--");
   if (status.ppsCalculatedPpmValid) {
@@ -1235,20 +1420,21 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
                   ".secret-value:focus{outline:2px solid rgba(32,201,151,0.75);outline-offset:3px;border-radius:4px}"
                   ".state-value{font-size:28px;font-weight:800;letter-spacing:0}"
                   ".state-detail{margin-top:6px;color:rgba(255,255,255,0.72);font-size:14px;line-height:1.4}"
-                  "a.action{display:inline-block;margin-top:14px;padding:10px 14px;font-size:14px;font-weight:700;text-decoration:none;color:#fff;"
+                  "a.action{display:inline-block;margin:14px 8px 0 0;padding:10px 14px;font-size:14px;font-weight:700;text-decoration:none;color:#fff;"
                     "border-radius:10px;background:linear-gradient(90deg,#0d6efd,#20c997);box-shadow:0 4px 14px rgba(13,110,253,0.35)}"
                   "</style></head><body><div class=\"wrap\">"
                   "<div class=\"card\"><h1>Stats</h1>"
                   "<p class=\"lead\">Live navigation snapshot rendered with the GNSS Config Dashboard theme.</p>"
                   "<a class=\"action\" href=\"/gnss\">Back to GNSS Config Dashboard</a>"
+                  "<a class=\"action\" href=\"/cmap\">CpuTempCalibration</a>"
                   "</div><div class=\"card\"><h2>Drift</h2><div class=\"grid\">"
                   "<div class=\"item\"><span class=\"label\">Holdover UTC epoch</span><span class=\"value\">");
   page += htmlEscape(holdoverUtcEpoch);
   page += F("</span></div><div class=\"item\"><span class=\"label\">STILL_UTC_EPOCH</span><span class=\"value\">");
   page += htmlEscape(stillUtcEpoch);
-  page += F("</span></div><div class=\"item\"><span class=\"label\">Drift <span class=\"unit\">(HOLDOVER − STILL)</span></span><span class=\"value\">");
+  page += F("</span></div><div class=\"item\"><span class=\"label\">Drift <span class=\"unit\">(STILL − HOLDOVER)</span></span><span class=\"value\">");
   page += htmlEscape(holdoverStillDrift);
-  page += F("</span></div><div class=\"item\"><span class=\"label\">PPM Error <span class=\"unit\">(HOLDOVER vs STILL)</span></span><span class=\"value\">");
+  page += F("</span></div><div class=\"item\"><span class=\"label\">PPM Error <span class=\"unit\">(STILL − HOLDOVER)</span></span><span class=\"value\">");
   page += htmlEscape(holdoverStillPpm);
   page += F("</span></div><div class=\"item\"><span class=\"label\">PPS_calculated_PPM(30s)</span><span class=\"value\">");
   page += htmlEscape(ppsCalculatedPpm);

@@ -172,6 +172,8 @@ Dashboard features:
 - System health from `SysHealth`: CPU avg/peak, ESP32 temperature, free heap RAM, uptime
 - Raw NMEA logging toggle (saved in NVS Preferences)
 - Display enable toggle (saved in NVS Preferences)
+- Editable GNSS clock settings (holdover timeouts and ConfirmedTime correction
+  thresholds, saved in NVS Preferences)
 
 Live NAV-PVT-style stats page:
 

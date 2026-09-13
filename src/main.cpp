@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <Preferences.h>
 #include <WiFi.h>
 #include <Wire.h>
 #include <U8g2lib.h>
@@ -43,6 +44,10 @@ uint32_t PPS_MCPWM_TICKS_PER_SECOND = CalibratedFqMap::DEFAULT_TICKS_PER_SECOND;
 constexpr bool PPS_MCPWM_TEMPERATURE_CALIBRATION_ENABLED = true;
 constexpr uint32_t GNSS_BAUD_RATE = 115200UL;
 constexpr uint32_t PPS_MCPWM_DEFAULT_FQ = 80000000UL;
+constexpr const char* CALIBRATION_NVS_NAMESPACE = "fqmap";
+constexpr const char* CALIBRATION_MAP_KEY = "map";
+constexpr const char* CALIBRATION_DYNAMIC_KEY = "dynamic";
+constexpr const char* CALIBRATION_THRESHOLD_KEY = "threshold";
 constexpr uint8_t PPS_CALCULATED_PPM_AVERAGE_SAMPLES = 30;
 constexpr uint64_t PPS_PPM_MIN_PERIOD_MICROS = 900000ULL;
 constexpr uint64_t PPS_PPM_MAX_PERIOD_MICROS = 1100000ULL;
@@ -59,6 +64,11 @@ U8G2_SH1106_128X64_NONAME_F_HW_I2C displayDriver(U8G2_R0, U8X8_PIN_NONE);
 OledClockDisplay oledDisplay(displayDriver);
 SysHealth sysHealth;
 OtaUpdate otaUpdate;
+CalibratedFqMap generatedCalibratedFqMap;
+CalibratedFqMap savedCalibratedFqMap;
+String savedCalibratedFqMapText;
+bool dynamicCalibrationEnabled = true;
+uint32_t dynamicCalibrationThresholdHz = CalibratedFqMap::DEFAULT_FREQUENCY_UPDATE_TOLERANCE_HZ;
 
 unsigned long lastDisplayUpdateMs = 0;
 unsigned long lastGpsStatusLogMs = 0;
@@ -103,9 +113,10 @@ const char* clockStateLabel(GpsClockState state) {
 void updatePpsMcpwmTicksPerSecondFromCpuTemperature(bool forceLog = false) {
   const float temperatureC = sysHealth.internalTemperatureC();
   const CalibratedFqValue calibration =
-      PPS_MCPWM_TEMPERATURE_CALIBRATION_ENABLED
-          ? CalibratedFqMap::nearestForTemperatureC(temperatureC)
-          : CalibratedFqValue{0, CalibratedFqMap::DEFAULT_TICKS_PER_SECOND};
+      savedCalibratedFqMap.size() == 0
+          ? CalibratedFqValue{CalibratedFqMap::temperatureToDeciC(temperatureC),
+                              CalibratedFqMap::DEFAULT_TICKS_PER_SECOND}
+          : savedCalibratedFqMap.nearestForTemperatureC(temperatureC);
   if (!forceLog && calibration.temperatureDeciC == appliedPpsMcpwmTemperatureDeciC) {
     return;
   }
@@ -123,6 +134,53 @@ void updatePpsMcpwmTicksPerSecondFromCpuTemperature(bool forceLog = false) {
     Serial.printf("MCPWM calibration disabled: using default %lu Hz\r\n",
                   static_cast<unsigned long>(PPS_MCPWM_TICKS_PER_SECOND));
   }
+}
+
+void loadCalibratedFqMap() {
+  Preferences preferences;
+  if (preferences.begin(CALIBRATION_NVS_NAMESPACE, true)) {
+    savedCalibratedFqMapText = preferences.getString(CALIBRATION_MAP_KEY, "");
+    dynamicCalibrationEnabled = preferences.getBool(CALIBRATION_DYNAMIC_KEY, true);
+    dynamicCalibrationThresholdHz = preferences.getUInt(
+        CALIBRATION_THRESHOLD_KEY, CalibratedFqMap::DEFAULT_FREQUENCY_UPDATE_TOLERANCE_HZ);
+    preferences.end();
+  }
+  if (dynamicCalibrationThresholdHz == 0 || dynamicCalibrationThresholdHz > 999UL) {
+    dynamicCalibrationThresholdHz = CalibratedFqMap::DEFAULT_FREQUENCY_UPDATE_TOLERANCE_HZ;
+  }
+  savedCalibratedFqMap.deserialize(savedCalibratedFqMapText);
+  generatedCalibratedFqMap.deserialize(savedCalibratedFqMapText);
+}
+
+bool saveDynamicCalibrationSettings(bool enabled, uint32_t thresholdHz) {
+  if (thresholdHz == 0 || thresholdHz > 999UL) return false;
+  Preferences preferences;
+  if (!preferences.begin(CALIBRATION_NVS_NAMESPACE, false)) return false;
+  const bool committed = preferences.putBool(CALIBRATION_DYNAMIC_KEY, enabled) > 0 &&
+                         preferences.putUInt(CALIBRATION_THRESHOLD_KEY, thresholdHz) > 0;
+  preferences.end();
+  if (committed) {
+    dynamicCalibrationEnabled = enabled;
+    dynamicCalibrationThresholdHz = thresholdHz;
+  }
+  return committed;
+}
+
+bool saveCalibratedFqMap(const String& serialized) {
+  CalibratedFqMap candidate;
+  if (!candidate.deserialize(serialized)) return false;
+  Preferences preferences;
+  if (!preferences.begin(CALIBRATION_NVS_NAMESPACE, false)) return false;
+  const String normalized = candidate.serialize();
+  const bool committed = preferences.putString(CALIBRATION_MAP_KEY, normalized) > 0;
+  preferences.end();
+  if (committed) {
+    savedCalibratedFqMap.deserialize(normalized);
+    generatedCalibratedFqMap.deserialize(normalized);
+    savedCalibratedFqMapText = normalized;
+    appliedPpsMcpwmTemperatureDeciC = INT16_MIN;
+  }
+  return committed;
 }
 
 void applyGpsDashboardSettings() {
@@ -166,11 +224,21 @@ uint64_t currentStillUtcEpochMicros() {
 }
 
 bool saveGpsDashboardSettings(const GpsDashboardSettings& settings) {
+  if (settings.kHoldoverTimeoutMs == 0 ||
+      settings.kConfirmedTimeHoldoverTimeoutMs == 0 ||
+      settings.kMaxConfirmedTimeCorrectionDeltaMs >=
+          settings.kMaxConfirmedTimeCorrectionIgnoreDeltaMs) {
+    return false;
+  }
   if (!dashboardStore.saveSettings(settings)) {
     return false;
   }
 
   gpsDashboardSettings = settings;
+  gnssClock.configure(settings.kHoldoverTimeoutMs,
+                      settings.kConfirmedTimeHoldoverTimeoutMs,
+                      settings.kMaxConfirmedTimeCorrectionDeltaMs,
+                      settings.kMaxConfirmedTimeCorrectionIgnoreDeltaMs);
   oledDisplay.setEnabled(gpsDashboardSettings.displayEnabled);
   dashboardStore.saveDisplayEnabled(gpsDashboardSettings.displayEnabled);
   applyGpsDashboardSettings();
@@ -229,8 +297,8 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
   if (statusOut.stillUtcEpochValid && statusOut.holdoverUtcValid) {
     statusOut.holdoverStillDriftValid = true;
     statusOut.holdoverStillDriftMicros =
-        static_cast<int64_t>(statusOut.holdoverEpochUtcMicros) -
-        static_cast<int64_t>(statusOut.stillUtcEpochMicros);
+        static_cast<int64_t>(statusOut.stillUtcEpochMicros) -
+        static_cast<int64_t>(statusOut.holdoverEpochUtcMicros);
     const uint64_t stillElapsedMicros =
         statusOut.stillUtcEpochMicros - stillUtcEpochBaseUtcMicros;
     if (stillElapsedMicros > 0) {
@@ -436,9 +504,18 @@ void processPpsCapture() {
       pulse.periodMicros <= PPS_PPM_MAX_PERIOD_MICROS &&
       ppsCapture.ticksPerSecond() > 0;
   if (ppsPpmSampleValid) {
+    if (dynamicCalibrationEnabled &&
+        generatedCalibratedFqMap.updateFromPps(
+            sysHealth.internalTemperatureC(), pulse.diffTicks,
+            dynamicCalibrationThresholdHz)) {
+      updatePpsMcpwmTicksPerSecondFromCpuTemperature(true);
+      Serial.printf("Dynamic MCPWM map updated: %d,%lu\r\n",
+                    CalibratedFqMap::temperatureToDeciC(sysHealth.internalTemperatureC()),
+                    static_cast<unsigned long>(pulse.diffTicks));
+    }
     const int64_t frequencyDiffTicks =
-        static_cast<int64_t>(PPS_MCPWM_DEFAULT_FQ) -
-        static_cast<int64_t>(pulse.diffTicks);
+        static_cast<int64_t>(pulse.diffTicks) -
+        static_cast<int64_t>(PPS_MCPWM_DEFAULT_FQ);
     ppsCalculatedPpmSamples[ppsCalculatedPpmSampleIndex] =
         static_cast<double>(frequencyDiffTicks) * 1000000.0 /
         static_cast<double>(PPS_MCPWM_DEFAULT_FQ);
@@ -582,6 +659,7 @@ void updateDisplay(uint32_t nowMs) {
 void setup() {
   Serial.begin(115200);
   delay(100);
+  loadCalibratedFqMap();
   sysHealth.begin();
   updatePpsMcpwmTicksPerSecondFromCpuTemperature(true);
 
@@ -599,6 +677,10 @@ void setup() {
   gpsDashboardSettings.displayEnabled = displayEnabled;
   dashboardStore.loadSettings(gpsDashboardSettings);
   gpsDashboardSettings.displayEnabled = displayEnabled;
+  gnssClock.configure(gpsDashboardSettings.kHoldoverTimeoutMs,
+                      gpsDashboardSettings.kConfirmedTimeHoldoverTimeoutMs,
+                      gpsDashboardSettings.kMaxConfirmedTimeCorrectionDeltaMs,
+                      gpsDashboardSettings.kMaxConfirmedTimeCorrectionIgnoreDeltaMs);
   applyGpsDashboardSettings();
 
   bootButton.begin();
@@ -614,6 +696,19 @@ void setup() {
 
   wifiPortal.setApCredentials(apSsid);
   wifiPortal.setGpsDashboardCallbacks(fillGpsDashboardData, saveGpsDashboardSettings);
+  wifiPortal.setCalibratedMapCallbacks(
+      []() { return generatedCalibratedFqMap.serialize(); },
+      []() { return savedCalibratedFqMapText; },
+      []() {
+        return String(F("CpuTemp: ")) +
+               String(sysHealth.internalTemperatureC(), 1) + F(", Fq=") +
+               String(ppsCapture.ticksPerSecond());
+      },
+      saveCalibratedFqMap);
+  wifiPortal.setDynamicCalibrationCallbacks(
+      []() { return dynamicCalibrationEnabled; },
+      []() { return dynamicCalibrationThresholdHz; },
+      saveDynamicCalibrationSettings);
   wifiPortal.setResetPin(BOOT_BUTTON_PIN, WIFI_RESET_HOLD_MS, LOW);
   wifiPortal.begin();
   beginOtaIfReady();

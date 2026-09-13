@@ -7,6 +7,10 @@ namespace {
 constexpr const char* DASHBOARD_PREFS_NAMESPACE = "gnss_dash";
 constexpr const char* DISPLAY_KEY = "display";
 constexpr const char* RAW_LOGGING_KEY = "raw";
+constexpr const char* HOLDOVER_TIMEOUT_KEY = "hold_timeout";
+constexpr const char* CONFIRMED_TIMEOUT_KEY = "conf_timeout";
+constexpr const char* CORRECTION_DELTA_KEY = "corr_delta";
+constexpr const char* CORRECTION_IGNORE_KEY = "corr_ignore";
 
 }  // namespace
 
@@ -61,6 +65,13 @@ void DashboardStore::loadSettings(GpsDashboardSettings& settingsOut) {
   }
 
   settingsOut.rawLoggingEnabled = prefs.getBool(RAW_LOGGING_KEY, false);
+  settingsOut.kHoldoverTimeoutMs = prefs.getUInt(HOLDOVER_TIMEOUT_KEY, settingsOut.kHoldoverTimeoutMs);
+  settingsOut.kConfirmedTimeHoldoverTimeoutMs = prefs.getUInt(
+      CONFIRMED_TIMEOUT_KEY, settingsOut.kConfirmedTimeHoldoverTimeoutMs);
+  settingsOut.kMaxConfirmedTimeCorrectionDeltaMs = prefs.getUInt(
+      CORRECTION_DELTA_KEY, settingsOut.kMaxConfirmedTimeCorrectionDeltaMs);
+  settingsOut.kMaxConfirmedTimeCorrectionIgnoreDeltaMs = prefs.getUInt(
+      CORRECTION_IGNORE_KEY, settingsOut.kMaxConfirmedTimeCorrectionIgnoreDeltaMs);
   prefs.end();
 }
 
@@ -74,10 +85,18 @@ bool DashboardStore::saveSettings(const GpsDashboardSettings& settings) {
 
   bool ok = true;
   ok = prefs.putBool(RAW_LOGGING_KEY, settings.rawLoggingEnabled) > 0 && ok;
+  ok = prefs.putUInt(HOLDOVER_TIMEOUT_KEY, settings.kHoldoverTimeoutMs) > 0 && ok;
+  ok = prefs.putUInt(CONFIRMED_TIMEOUT_KEY, settings.kConfirmedTimeHoldoverTimeoutMs) > 0 && ok;
+  ok = prefs.putUInt(CORRECTION_DELTA_KEY, settings.kMaxConfirmedTimeCorrectionDeltaMs) > 0 && ok;
+  ok = prefs.putUInt(CORRECTION_IGNORE_KEY, settings.kMaxConfirmedTimeCorrectionIgnoreDeltaMs) > 0 && ok;
   prefs.end();
   return ok;
 }
 
 void DashboardStore::applyDefaultSettings(GpsDashboardSettings& settingsOut) {
   settingsOut.rawLoggingEnabled = false;
+  settingsOut.kHoldoverTimeoutMs = 1440UL * 60UL * 1000UL;
+  settingsOut.kConfirmedTimeHoldoverTimeoutMs = 60UL * 1000UL;
+  settingsOut.kMaxConfirmedTimeCorrectionDeltaMs = 5UL;
+  settingsOut.kMaxConfirmedTimeCorrectionIgnoreDeltaMs = 100UL;
 }

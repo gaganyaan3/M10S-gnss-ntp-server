@@ -19,6 +19,11 @@ class GnssClock {
  public:
   GnssClock(GnssMaxM10S& gps, PpsCapture& ppsCapture);
 
+  void configure(uint32_t holdoverTimeoutMs,
+                 uint32_t confirmedTimeHoldoverTimeoutMs,
+                 uint32_t maxConfirmedTimeCorrectionDeltaMs,
+                 uint32_t maxConfirmedTimeCorrectionIgnoreDeltaMs);
+
   bool navPvtConfirmedTimeEpochUs(uint64_t& epochUsUtcOut, uint32_t* receivedUsOut = nullptr);
   bool navPvtCoarseEpochUs(uint64_t& epochUsUtcOut, uint32_t* receivedUsOut = nullptr);
   bool currentPpsLockedEpochUs(uint64_t& epochUsUtcOut);
@@ -30,10 +35,10 @@ class GnssClock {
   GpsClockState clockState(const GpsDashboardStatus& status) const;
 
  private:
-  static constexpr uint32_t kHoldoverTimeoutMs = 1440UL * 60UL * 1000UL;
-  static constexpr uint32_t kConfirmedTimeHoldoverTimeoutMs = 60UL * 1000UL; // Timeout holdover for ConfirmedTime correction
-  static constexpr int64_t kMaxConfirmedTimeCorrectionDeltaMs = 10; // Diff for correction between holdover and NAV-PVT
-  static constexpr int64_t kMaxConfirmedTimeCorrectionIgnoreDeltaMs = 100;
+  static constexpr uint32_t DEFAULT_HOLDOVER_TIMEOUT_MS = 1440UL * 60UL * 1000UL;
+  static constexpr uint32_t DEFAULT_CONFIRMED_TIME_HOLDOVER_TIMEOUT_MS = 60UL * 1000UL;
+  static constexpr uint32_t DEFAULT_MAX_CONFIRMED_TIME_CORRECTION_DELTA_MS = 5UL;
+  static constexpr uint32_t DEFAULT_MAX_CONFIRMED_TIME_CORRECTION_IGNORE_DELTA_MS = 100UL;
 
   uint64_t ppsTicksToUs(uint64_t ticks) const;
   void anchorHoldoverRawUs(uint64_t epochUsUtc);
@@ -62,4 +67,8 @@ class GnssClock {
   bool holdoverDeadlineValid_ = false;
   bool holdoverNavPvtTimeoutStarted_ = false;
   uint32_t holdoverDeadlineMs_ = 0;
+  uint32_t kHoldoverTimeoutMs_ = DEFAULT_HOLDOVER_TIMEOUT_MS;
+  uint32_t kConfirmedTimeHoldoverTimeoutMs_ = DEFAULT_CONFIRMED_TIME_HOLDOVER_TIMEOUT_MS;
+  uint32_t kMaxConfirmedTimeCorrectionDeltaMs_ = DEFAULT_MAX_CONFIRMED_TIME_CORRECTION_DELTA_MS;
+  uint32_t kMaxConfirmedTimeCorrectionIgnoreDeltaMs_ = DEFAULT_MAX_CONFIRMED_TIME_CORRECTION_IGNORE_DELTA_MS;
 };
