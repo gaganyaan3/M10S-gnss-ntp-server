@@ -10,6 +10,7 @@ struct PpsPulse {
   uint32_t previousEdgeTicks = 0;
   uint32_t diffTicks = 0;
   uint64_t periodMicros = 0;
+  uint64_t periodNanos = 0;
   int32_t frequencyDiffTicks = 0;
 };
 

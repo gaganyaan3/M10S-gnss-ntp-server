@@ -544,10 +544,10 @@ void processPpsCapture() {
       ppsCalculatedPpmValid = true;
     }
   }
-  Serial.printf("PPS pulse #%lu %lu ticks | PPS: %llu us",
+  Serial.printf("PPS pulse #%lu %lu ticks | PPS: %llu ns",
                 static_cast<unsigned long>(pulse.pulseCount),
                 static_cast<unsigned long>(pulse.edgeTicks),
-                static_cast<unsigned long long>(pulse.periodMicros));
+                static_cast<unsigned long long>(pulse.periodNanos));
   if (pulse.elapsedPulses > 1) {
     Serial.printf(" | skipped main-loop pulses: %lu",
                   static_cast<unsigned long>(pulse.elapsedPulses - 1));
