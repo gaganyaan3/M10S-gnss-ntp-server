@@ -224,11 +224,21 @@ uint64_t currentStillUtcEpochMicros() {
 }
 
 bool saveGpsDashboardSettings(const GpsDashboardSettings& settings) {
+  if (settings.kHoldoverTimeoutMs == 0 ||
+      settings.kConfirmedTimeHoldoverTimeoutMs == 0 ||
+      settings.kMaxConfirmedTimeCorrectionDeltaMs >=
+          settings.kMaxConfirmedTimeCorrectionIgnoreDeltaMs) {
+    return false;
+  }
   if (!dashboardStore.saveSettings(settings)) {
     return false;
   }
 
   gpsDashboardSettings = settings;
+  gnssClock.configure(settings.kHoldoverTimeoutMs,
+                      settings.kConfirmedTimeHoldoverTimeoutMs,
+                      settings.kMaxConfirmedTimeCorrectionDeltaMs,
+                      settings.kMaxConfirmedTimeCorrectionIgnoreDeltaMs);
   oledDisplay.setEnabled(gpsDashboardSettings.displayEnabled);
   dashboardStore.saveDisplayEnabled(gpsDashboardSettings.displayEnabled);
   applyGpsDashboardSettings();
@@ -667,6 +677,10 @@ void setup() {
   gpsDashboardSettings.displayEnabled = displayEnabled;
   dashboardStore.loadSettings(gpsDashboardSettings);
   gpsDashboardSettings.displayEnabled = displayEnabled;
+  gnssClock.configure(gpsDashboardSettings.kHoldoverTimeoutMs,
+                      gpsDashboardSettings.kConfirmedTimeHoldoverTimeoutMs,
+                      gpsDashboardSettings.kMaxConfirmedTimeCorrectionDeltaMs,
+                      gpsDashboardSettings.kMaxConfirmedTimeCorrectionIgnoreDeltaMs);
   applyGpsDashboardSettings();
 
   bootButton.begin();

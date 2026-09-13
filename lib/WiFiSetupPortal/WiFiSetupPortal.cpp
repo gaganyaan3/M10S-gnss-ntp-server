@@ -1,6 +1,7 @@
 #include "WiFiSetupPortal.h"
 
 #include <Preferences.h>
+#include <cstdlib>
 
 namespace {
 
@@ -22,6 +23,21 @@ String htmlEscape(const String& input) {
     else out += c;
   }
   return out;
+}
+
+bool parseUnsignedSetting(const String& value, uint32_t& output) {
+  if (value.isEmpty()) return false;
+  char* end = nullptr;
+  const unsigned long parsed = strtoul(value.c_str(), &end, 10);
+  if (*end != '\0' || parsed > 99999UL) return false;
+  output = static_cast<uint32_t>(parsed);
+  return true;
+}
+
+bool minutesToMilliseconds(uint32_t minutes, uint32_t& milliseconds) {
+  if (minutes == 0 || minutes > (0xFFFFFFFFUL / 60000UL)) return false;
+  milliseconds = minutes * 60000UL;
+  return true;
 }
 
 String yesNoLabel(bool value) {
@@ -911,6 +927,21 @@ void WiFiSetupPortal::handleGpsSave() {
 
   settings.rawLoggingEnabled = server_.hasArg("raw_logging");
   settings.displayEnabled = server_.hasArg("display_enabled");
+  uint32_t holdoverTimeoutMinutes = 0;
+  uint32_t confirmedTimeHoldoverTimeoutMinutes = 0;
+  if (!parseUnsignedSetting(server_.arg("kHoldoverTimeoutMs"), holdoverTimeoutMinutes) ||
+      !minutesToMilliseconds(holdoverTimeoutMinutes, settings.kHoldoverTimeoutMs) ||
+      !parseUnsignedSetting(server_.arg("kConfirmedTimeHoldoverTimeoutMs"),
+                            confirmedTimeHoldoverTimeoutMinutes) ||
+      !minutesToMilliseconds(confirmedTimeHoldoverTimeoutMinutes,
+                             settings.kConfirmedTimeHoldoverTimeoutMs) ||
+      !parseUnsignedSetting(server_.arg("kMaxConfirmedTimeCorrectionDeltaMs"),
+                            settings.kMaxConfirmedTimeCorrectionDeltaMs) ||
+      !parseUnsignedSetting(server_.arg("kMaxConfirmedTimeCorrectionIgnoreDeltaMs"),
+                            settings.kMaxConfirmedTimeCorrectionIgnoreDeltaMs)) {
+    server_.send(400, "text/plain", "Invalid GNSS clock setting");
+    return;
+  }
 
   if (!gpsConfigSaver_(settings)) {
     server_.send(500, "text/plain", "Failed to save GNSS settings");
@@ -1148,6 +1179,12 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
                   ".toggle input{margin-top:4px;transform:scale(1.2)}"
                   ".toggle strong{display:block;margin-bottom:4px}"
                   ".toggle span{display:block;color:rgba(255,255,255,0.68);font-size:14px;line-height:1.4}"
+                  ".setting{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;background:rgba(255,255,255,0.05);border-radius:12px;padding:14px}"
+                  ".setting strong{display:block;margin-bottom:4px}"
+                  ".setting span span{display:block;color:rgba(255,255,255,0.68);font-size:14px;line-height:1.4}"
+                  ".setting-control{display:flex;align-items:center;gap:8px}"
+                  ".setting input{width:90px;padding:9px 10px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.25);border-radius:8px;color:#fff}"
+                  ".setting .unit{color:rgba(255,255,255,0.72);font-size:14px;white-space:nowrap}"
                   "button{width:100%;padding:13px 16px;font-size:16px;font-weight:700;border:none;border-radius:10px;color:#fff;cursor:pointer;"
                     "background:linear-gradient(90deg,#0d6efd,#20c997);box-shadow:0 4px 14px rgba(13,110,253,0.35)}"
                   "a.action{display:inline-block;margin-top:14px;padding:10px 14px;font-size:14px;font-weight:700;text-decoration:none;color:#fff;"
@@ -1238,6 +1275,22 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
     page += F(" checked");
   }
   page += F("><span><strong>Display enabled</strong><span>Turn the OLED display on or off.</span></span></label>"
+            "<label class=\"setting\"><span><strong>kHoldoverTimeoutMs</strong><span>Maximum PPS-disciplined holdover duration.</span></span>"
+            "<span class=\"setting-control\"><input type=\"number\" name=\"kHoldoverTimeoutMs\" min=\"1\" max=\"71582\" maxlength=\"5\" oninput=\"this.value=this.value.slice(0,5)\" step=\"1\" value=\"");
+  page += htmlEscape(String(settings.kHoldoverTimeoutMs / 60000UL));
+  page += F("\"><span class=\"unit\">min</span></span></label>"
+            "<label class=\"setting\"><span><strong>kConfirmedTimeHoldoverTimeoutMs</strong><span>ConfirmedTime holdover duration.</span></span>"
+            "<span class=\"setting-control\"><input type=\"number\" name=\"kConfirmedTimeHoldoverTimeoutMs\" min=\"1\" max=\"71582\" maxlength=\"5\" oninput=\"this.value=this.value.slice(0,5)\" step=\"1\" value=\"");
+  page += htmlEscape(String(settings.kConfirmedTimeHoldoverTimeoutMs / 60000UL));
+  page += F("\"><span class=\"unit\">min</span></span></label>"
+            "<label class=\"setting\"><span><strong>kMaxConfirmedTimeCorrectionDeltaMs</strong><span>Correction is skipped at or below this delta.</span></span>"
+            "<span class=\"setting-control\"><input type=\"number\" name=\"kMaxConfirmedTimeCorrectionDeltaMs\" min=\"0\" max=\"99999\" maxlength=\"5\" oninput=\"this.value=this.value.slice(0,5)\" step=\"1\" value=\"");
+  page += htmlEscape(String(settings.kMaxConfirmedTimeCorrectionDeltaMs));
+  page += F("\"><span class=\"unit\">ms</span></span></label>"
+            "<label class=\"setting\"><span><strong>kMaxConfirmedTimeCorrectionIgnoreDeltaMs</strong><span>Correction is ignored at or above this delta.</span></span>"
+            "<span class=\"setting-control\"><input type=\"number\" name=\"kMaxConfirmedTimeCorrectionIgnoreDeltaMs\" min=\"1\" max=\"99999\" maxlength=\"5\" oninput=\"this.value=this.value.slice(0,5)\" step=\"1\" value=\"");
+  page += htmlEscape(String(settings.kMaxConfirmedTimeCorrectionIgnoreDeltaMs));
+  page += F("\"><span class=\"unit\">ms</span></span></label>"
             "<button type=\"submit\">Save</button>"
             "<div class=\"banner\" id=\"save-banner\" style=\"display:none\">GPS settings saved to NVS.</div>"
             "<script>(function(){"

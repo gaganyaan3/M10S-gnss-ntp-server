@@ -9,6 +9,10 @@
 struct GpsDashboardSettings {
   bool rawLoggingEnabled = false;
   bool displayEnabled = true;
+  uint32_t kHoldoverTimeoutMs = 1440UL * 60UL * 1000UL;
+  uint32_t kConfirmedTimeHoldoverTimeoutMs = 60UL * 1000UL;
+  uint32_t kMaxConfirmedTimeCorrectionDeltaMs = 5UL;
+  uint32_t kMaxConfirmedTimeCorrectionIgnoreDeltaMs = 100UL;
 };
 
 enum GpsClockState : uint8_t {

@@ -3,6 +3,16 @@
 GnssClock::GnssClock(GnssMaxM10S& gps, PpsCapture& ppsCapture)
     : gps_(gps), ppsCapture_(ppsCapture) {}
 
+void GnssClock::configure(uint32_t holdoverTimeoutMs,
+                          uint32_t confirmedTimeHoldoverTimeoutMs,
+                          uint32_t maxConfirmedTimeCorrectionDeltaMs,
+                          uint32_t maxConfirmedTimeCorrectionIgnoreDeltaMs) {
+  kHoldoverTimeoutMs_ = holdoverTimeoutMs;
+  kConfirmedTimeHoldoverTimeoutMs_ = confirmedTimeHoldoverTimeoutMs;
+  kMaxConfirmedTimeCorrectionDeltaMs_ = maxConfirmedTimeCorrectionDeltaMs;
+  kMaxConfirmedTimeCorrectionIgnoreDeltaMs_ = maxConfirmedTimeCorrectionIgnoreDeltaMs;
+}
+
 bool GnssClock::navPvtCoarseEpochUs(uint64_t& epochUsUtcOut, uint32_t* receivedUsOut) {
   GnssNavPvtData pvt;
   gps_.navPvtSnapshot(pvt);
@@ -45,7 +55,7 @@ bool GnssClock::currentPpsLockedEpochUs(uint64_t& epochUsUtcOut) {
   uint64_t epochNsUtc = 0;
   if (gps_.currentUtcEpochNsPps(epochNsUtc) && gps_.ppsRecentlySeen()) {
     epochUsUtcOut = epochNsUtc / 1000ULL;
-    refreshHoldoverTimeout(kHoldoverTimeoutMs);
+    refreshHoldoverTimeout(kHoldoverTimeoutMs_);
     holdoverNavPvtTimeoutStarted_ = false;
     holdoverPpsDisciplined_ = true;
     holdoverNavPvtReceivedUsValid_ = false;
@@ -85,14 +95,14 @@ bool GnssClock::currentNtpEpochUs(uint64_t& epochUsUtcOut) {
     if (!holdoverPpsDisciplined_ && !holdoverNavPvtTimeoutStarted_) {
       epochUsUtcOut = confirmedTimeEpochUsUtc;
       anchorHoldoverUs(epochUsUtcOut);
-      startNavPvtHoldoverTimeout(kConfirmedTimeHoldoverTimeoutMs);
+      startNavPvtHoldoverTimeout(kConfirmedTimeHoldoverTimeoutMs_);
       holdoverNavPvtReceivedUs_ = confirmedTimeReceivedUs;
       holdoverNavPvtReceivedUsValid_ = true;
       return true;
     }
 
     if (!holdoverNavPvtTimeoutStarted_) {
-      startNavPvtHoldoverTimeout(kConfirmedTimeHoldoverTimeoutMs);
+      startNavPvtHoldoverTimeout(kConfirmedTimeHoldoverTimeoutMs_);
     }
 
     uint32_t remainingSeconds = 0;
@@ -106,7 +116,7 @@ bool GnssClock::currentNtpEpochUs(uint64_t& epochUsUtcOut) {
                          confirmedTimeEpochUsUtc,
                          navPvtFallbackLabel,
                          epochUsUtcOut)) {
-      restartNavPvtHoldoverTimeout(kConfirmedTimeHoldoverTimeoutMs);
+      restartNavPvtHoldoverTimeout(kConfirmedTimeHoldoverTimeoutMs_);
       return true;
     }
 
@@ -116,7 +126,7 @@ bool GnssClock::currentNtpEpochUs(uint64_t& epochUsUtcOut) {
   if (confirmedTimeEpochValid) {
     epochUsUtcOut = confirmedTimeEpochUsUtc;
     anchorHoldoverUs(epochUsUtcOut);
-    startNavPvtHoldoverTimeout(kConfirmedTimeHoldoverTimeoutMs);
+    startNavPvtHoldoverTimeout(kConfirmedTimeHoldoverTimeoutMs_);
     holdoverPpsDisciplined_ = false;
     holdoverNavPvtReceivedUs_ = confirmedTimeReceivedUs;
     holdoverNavPvtReceivedUsValid_ = true;
@@ -255,20 +265,20 @@ bool GnssClock::updateCorrection(uint64_t referenceEpochUsUtc,
   const int64_t deltaMs = static_cast<int64_t>(navPvtEpochUsUtc / 1000ULL) -
                           static_cast<int64_t>(referenceEpochUsUtc / 1000ULL);
   const int64_t absDeltaMs = abs64(deltaMs);
-  if (absDeltaMs >= kMaxConfirmedTimeCorrectionIgnoreDeltaMs) {
+  if (absDeltaMs >= kMaxConfirmedTimeCorrectionIgnoreDeltaMs_) {
   Serial.printf("%s correction ignored | deltaMs=%lld thresholdMs=%lld ignoreAtMs=%lld\r\n",
                   sourceLabel,
                   static_cast<long long>(deltaMs),
-                  static_cast<long long>(kMaxConfirmedTimeCorrectionDeltaMs),
-                  static_cast<long long>(kMaxConfirmedTimeCorrectionIgnoreDeltaMs));
+                  static_cast<unsigned long>(kMaxConfirmedTimeCorrectionDeltaMs_),
+                  static_cast<unsigned long>(kMaxConfirmedTimeCorrectionIgnoreDeltaMs_));
     return true;
   }
 
-  if (absDeltaMs <= kMaxConfirmedTimeCorrectionDeltaMs) {
+  if (absDeltaMs <= kMaxConfirmedTimeCorrectionDeltaMs_) {
     Serial.printf("%s correction skipped | deltaMs=%lld thresholdMs=%lld\r\n",
                   sourceLabel,
                   static_cast<long long>(deltaMs),
-                  static_cast<long long>(kMaxConfirmedTimeCorrectionDeltaMs));
+                  static_cast<unsigned long>(kMaxConfirmedTimeCorrectionDeltaMs_));
     return true;
   }
 
