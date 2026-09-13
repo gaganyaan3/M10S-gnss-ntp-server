@@ -287,8 +287,8 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
   if (statusOut.stillUtcEpochValid && statusOut.holdoverUtcValid) {
     statusOut.holdoverStillDriftValid = true;
     statusOut.holdoverStillDriftMicros =
-        static_cast<int64_t>(statusOut.holdoverEpochUtcMicros) -
-        static_cast<int64_t>(statusOut.stillUtcEpochMicros);
+        static_cast<int64_t>(statusOut.stillUtcEpochMicros) -
+        static_cast<int64_t>(statusOut.holdoverEpochUtcMicros);
     const uint64_t stillElapsedMicros =
         statusOut.stillUtcEpochMicros - stillUtcEpochBaseUtcMicros;
     if (stillElapsedMicros > 0) {
@@ -504,8 +504,8 @@ void processPpsCapture() {
                     static_cast<unsigned long>(pulse.diffTicks));
     }
     const int64_t frequencyDiffTicks =
-        static_cast<int64_t>(PPS_MCPWM_DEFAULT_FQ) -
-        static_cast<int64_t>(pulse.diffTicks);
+        static_cast<int64_t>(pulse.diffTicks) -
+        static_cast<int64_t>(PPS_MCPWM_DEFAULT_FQ);
     ppsCalculatedPpmSamples[ppsCalculatedPpmSampleIndex] =
         static_cast<double>(frequencyDiffTicks) * 1000000.0 /
         static_cast<double>(PPS_MCPWM_DEFAULT_FQ);

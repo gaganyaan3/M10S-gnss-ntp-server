@@ -32,7 +32,7 @@ class GnssClock {
  private:
   static constexpr uint32_t kHoldoverTimeoutMs = 1440UL * 60UL * 1000UL;
   static constexpr uint32_t kConfirmedTimeHoldoverTimeoutMs = 60UL * 1000UL; // Timeout holdover for ConfirmedTime correction
-  static constexpr int64_t kMaxConfirmedTimeCorrectionDeltaMs = 10; // Diff for correction between holdover and NAV-PVT
+  static constexpr int64_t kMaxConfirmedTimeCorrectionDeltaMs = 5; // Diff for correction between holdover and NAV-PVT
   static constexpr int64_t kMaxConfirmedTimeCorrectionIgnoreDeltaMs = 100;
 
   uint64_t ppsTicksToUs(uint64_t ticks) const;

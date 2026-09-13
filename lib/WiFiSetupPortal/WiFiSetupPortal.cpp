@@ -817,7 +817,7 @@ String WiFiSetupPortal::calibratedMapPage() const {
                   "textarea{width:100%;min-height:220px;background:rgba(0,0,0,0.28);color:#fff;border:1px solid rgba(255,255,255,0.25);"
                   "border-radius:10px;padding:12px;font:14px monospace;resize:vertical}"
                   "button,.action{display:block;width:100%;padding:12px;margin-top:12px;background:linear-gradient(90deg,#0d6efd,#20c997);"
-                  "color:#fff;border:0;border-radius:10px;text-align:center;text-decoration:none;font-size:14px;font-weight:700;cursor:pointer}"
+                  "color:#fff;border:0;border-radius:10px;text-align:center;text-decoration:none;font:inherit;font-size:14px;font-weight:700;cursor:pointer}"
                   "label{display:block;color:rgba(255,255,255,0.8);font-size:18px;font-weight:700;margin-bottom:10px}"
                   "input[type=number]{width:90px;margin-left:6px;padding:8px 10px;background:rgba(255,255,255,0.08);"
                   "border:1px solid rgba(255,255,255,0.25);border-radius:8px;color:#fff}"
@@ -836,7 +836,7 @@ String WiFiSetupPortal::calibratedMapPage() const {
             "<p>Not being used in calibration. Use one Celsius/frequency entry per line (for example <code>50.0,79999570</code>). Entries define lower-inclusive ranges; below the first entry uses the first frequency.</p>"
             "<form action=\"/map-save\" method=\"POST\"><textarea name=\"calibrated_map\" spellcheck=\"false\">");
   page += current;
-  page += F("</textarea><button>Save to NVS</button></form></div>"
+  page += F("</textarea><button>Save calibrated map to storage</button></form></div>"
             "<div class=\"card\"><h2>Saved calibrated map (Active)</h2>"
             "<p>Being Used in calibration. Internal Clock Fq being adjusted based on CpuTemp</p>"
             "<form action=\"/map-save\" method=\"POST\"><textarea name=\"saved_calibrated_map\" spellcheck=\"false\">");
@@ -885,7 +885,7 @@ String WiFiSetupPortal::mapPage() const {
   const String status = htmlEscape(cMapStatusProvider_ ? cMapStatusProvider_() : String());
   const bool enabled = cMapEnabledProvider_ ? cMapEnabledProvider_() : true;
   const uint32_t threshold = cMapThresholdProvider_ ? cMapThresholdProvider_() : 8UL;
-  String page = F("<!DOCTYPE html><html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>MCPWM Calibrated FQ Map</title><style>body{font-family:Arial;background:#16213e;color:#fff;padding:20px}main{max-width:760px;margin:auto}.card{background:#ffffff14;border:1px solid #ffffff30;border-radius:14px;padding:20px;margin-bottom:18px}textarea{width:100%;min-height:220px;background:#0005;color:#fff;border:1px solid #ffffff40;padding:10px;font:14px monospace;box-sizing:border-box}button,.action{display:block;width:100%;padding:12px;margin-top:12px;background:#087fce;color:#fff;border:0;border-radius:8px;text-align:center;text-decoration:none;box-sizing:border-box}p{line-height:1.45;color:#ddd}</style></head><body><main><div class=\"card\"><h1>MCPWM 80MHz Calibrated FQ Map</h1><p>Dynamic PPS frequency calibration by CPU temperature.</p><form action=\"/map-settings-save\" method=\"POST\"><label><input type=\"checkbox\" name=\"dynamic_calibration\"");
+  String page = F("<!DOCTYPE html><html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>MCPWM Calibrated FQ Map</title><style>body{font-family:Arial;background:#16213e;color:#fff;padding:20px}main{max-width:760px;margin:auto}.card{background:#ffffff14;border:1px solid #ffffff30;border-radius:14px;padding:20px;margin-bottom:18px}textarea{width:100%;min-height:220px;background:#0005;color:#fff;border:1px solid #ffffff40;padding:10px;font:14px monospace;box-sizing:border-box}button,.action{display:block;width:100%;padding:12px;margin-top:12px;background:#087fce;color:#fff;border:0;border-radius:8px;text-align:center;text-decoration:none;font:inherit;box-sizing:border-box}p{line-height:1.45;color:#ddd}</style></head><body><main><div class=\"card\"><h1>MCPWM 80MHz Calibrated FQ Map</h1><p>Dynamic PPS frequency calibration by CPU temperature.</p><form action=\"/map-settings-save\" method=\"POST\"><label><input type=\"checkbox\" name=\"dynamic_calibration\"");
   if (enabled) page += F(" checked");
   page += F("> Enable dynamic calibration</label><p>Update threshold (Hz): <input type=\"number\" name=\"calibration_threshold_hz\" min=\"1\" max=\"999\" value=\"");
   page += threshold;
@@ -1167,7 +1167,7 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
   page += F("<a class=\"action\" href=\"/stats\">Open Stats</a>");
 
   page += F("</div><div class=\"card\"><h2>Runtime Status</h2><div class=\"grid\">"
-            "<div class=\"item\"><span class=\"label\">PPS</span><span class=\"value\">");
+            "<div class=\"item\"><span class=\"label\">Calibrated PPS</span><span class=\"value\">");
   if (status.ppsAligned && status.ppsPeriodValid) {
     char ppsBuf[20];
     snprintf(ppsBuf, sizeof(ppsBuf), "%.9f", status.ppsPeriodSeconds);
@@ -1301,7 +1301,7 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
     holdoverStillDrift = formatSignedMicros(status.holdoverStillDriftMicros);
   }
   if (status.holdoverStillPpmValid) {
-    holdoverStillPpm = formatSignedPpm(status.holdoverStillPpm);
+    holdoverStillPpm = formatSignedPpm(status.holdoverStillPpm) + F("*");
   }
   String ppsCalculatedPpm = F("--");
   if (status.ppsCalculatedPpmValid) {
@@ -1367,7 +1367,7 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
                   ".secret-value:focus{outline:2px solid rgba(32,201,151,0.75);outline-offset:3px;border-radius:4px}"
                   ".state-value{font-size:28px;font-weight:800;letter-spacing:0}"
                   ".state-detail{margin-top:6px;color:rgba(255,255,255,0.72);font-size:14px;line-height:1.4}"
-                  "a.action{display:inline-block;margin-top:14px;padding:10px 14px;font-size:14px;font-weight:700;text-decoration:none;color:#fff;"
+                  "a.action{display:inline-block;margin:14px 8px 0 0;padding:10px 14px;font-size:14px;font-weight:700;text-decoration:none;color:#fff;"
                     "border-radius:10px;background:linear-gradient(90deg,#0d6efd,#20c997);box-shadow:0 4px 14px rgba(13,110,253,0.35)}"
                   "</style></head><body><div class=\"wrap\">"
                   "<div class=\"card\"><h1>Stats</h1>"
@@ -1379,9 +1379,9 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
   page += htmlEscape(holdoverUtcEpoch);
   page += F("</span></div><div class=\"item\"><span class=\"label\">STILL_UTC_EPOCH</span><span class=\"value\">");
   page += htmlEscape(stillUtcEpoch);
-  page += F("</span></div><div class=\"item\"><span class=\"label\">Drift <span class=\"unit\">(HOLDOVER − STILL)</span></span><span class=\"value\">");
+  page += F("</span></div><div class=\"item\"><span class=\"label\">Drift <span class=\"unit\">(STILL − HOLDOVER)</span></span><span class=\"value\">");
   page += htmlEscape(holdoverStillDrift);
-  page += F("</span></div><div class=\"item\"><span class=\"label\">PPM Error <span class=\"unit\">(HOLDOVER vs STILL)</span></span><span class=\"value\">");
+  page += F("</span></div><div class=\"item\"><span class=\"label\">PPM Error <span class=\"unit\">(STILL − HOLDOVER)</span></span><span class=\"value\">");
   page += htmlEscape(holdoverStillPpm);
   page += F("</span></div><div class=\"item\"><span class=\"label\">PPS_calculated_PPM(30s)</span><span class=\"value\">");
   page += htmlEscape(ppsCalculatedPpm);
