@@ -140,8 +140,8 @@ class GnssMaxM10S {
   static constexpr uint32_t kMaxNavPvtStatusAgeMs = 5000UL;
   static constexpr uint32_t kMaxNavDopAgeMs = 5000UL;
   static constexpr uint32_t kMaxTimTpAgeForPpsMs = 1500UL;
-  static constexpr uint32_t kMaxPpsHoldoverMs = 10000UL;
-  static constexpr uint32_t kPpsRecentlySeenMs = 2500UL;
+  static constexpr uint32_t kMaxPpsHoldoverMs = 1500UL;
+  static constexpr uint32_t kPpsRecentlySeenMs = 1500UL;
   static constexpr uint32_t kMonRfStaleMs = 3000UL;
   static uint32_t toUnixUtc(int year, int month, int day, int hour, int minute, int second);
   static int32_t readI4(const uint8_t* payload, uint16_t offset);

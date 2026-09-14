@@ -67,14 +67,20 @@ bool PpsCapture::consumePulse(PpsPulse& pulseOut) {
   pulseOut.periodNanos =
       (static_cast<uint64_t>(pulseOut.diffTicks) * 1000000000ULL) / ticksPerSecond_;
   lastMeasuredFrequencyHz_ = pulseOut.diffTicks;
+  lastPeriodValid_ = isValidPpsPeriod(pulseOut);
 
   lastConsumedPulseCount_ = pulseCountSnapshot;
   if (pulseCountSnapshot > 1) {
     lastPeriodSeconds_ = static_cast<double>(pulseOut.diffTicks) / ticksPerSecond_;
-    lastPeriodValid_ = true;
   }
 
   return true;
+}
+
+bool PpsCapture::isValidPpsPeriod(const PpsPulse& pulse) {
+  return pulse.elapsedPulses == 1 &&
+         pulse.periodMicros >= MIN_PPS_PERIOD_MICROS &&
+         pulse.periodMicros <= MAX_PPS_PERIOD_MICROS;
 }
 
 void PpsCapture::setTicksPerSecond(uint32_t ticksPerSecond) {

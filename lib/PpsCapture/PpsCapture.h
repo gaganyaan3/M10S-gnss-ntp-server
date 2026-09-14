@@ -17,6 +17,9 @@ struct PpsPulse {
 class PpsCapture {
  public:
   static constexpr uint32_t DEFAULT_TICKS_PER_SECOND = 79998000UL;
+  // Shared PPS acceptance window: 1 second +/- 1%.
+  static constexpr uint64_t MIN_PPS_PERIOD_MICROS = 990000ULL;
+  static constexpr uint64_t MAX_PPS_PERIOD_MICROS = 1010000ULL;
 
   explicit PpsCapture(uint32_t ticksPerSecond = DEFAULT_TICKS_PER_SECOND);
 
@@ -30,6 +33,7 @@ class PpsCapture {
   uint32_t lastMeasuredFrequencyHz() const;
   double lastPeriodSeconds() const;
   bool lastPeriodValid() const;
+  static bool isValidPpsPeriod(const PpsPulse& pulse);
 
  private:
   static bool onCapture(mcpwm_unit_t mcpwm,

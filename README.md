@@ -82,6 +82,12 @@ kept at nanosecond resolution through the holdover and NTP paths. ConfirmedTime
 is the NAV-PVT fallback when NAV-PVT has validDate, validTime, fullyResolved,
 and confirmedTime.
 
+Each PPS interval must contain exactly one pulse and measure between 990 ms and
+1010 ms (1 second +/- 1%). Intervals outside this range are rejected: they do
+not re-anchor the GNSS clock, update PPM, update the temperature calibration,
+or appear as a valid MCPWM frequency metric. The first PPS edge is accepted to
+establish the initial UTC anchor; subsequent edges must pass this validation.
+
 The MCPWM counter provides 12.5 ns tick resolution at 80 MHz. NTP timestamps
 preserve the resulting nanosecond value in the NTP fractional-seconds field.
 This describes timestamp resolution, not guaranteed UTC accuracy: holdover
@@ -123,9 +129,12 @@ wrappers.
 NTP source priority is PPSAnchored with PPS first, then ConfirmedTime, then valid
 holdover.
 
-After a PPSAnchored state has anchored holdover, losing PPS enters HOLDOVER and
-keeps serving from that PPS-disciplined timestamp for `kHoldoverTimeoutMs`.
-Live ConfirmedTime NAV-PVT data does not shorten that PPS holdover deadline; it
+After a PPSAnchored state has anchored holdover, losing PPS or receiving an
+invalid PPS interval enters HOLDOVER after PPS has not been seen for 1.5 seconds
+(`kPpsRecentlySeenMs` and `kMaxPpsHoldoverMs`). It keeps serving from that
+PPS-disciplined timestamp for `kHoldoverTimeoutMs`, using the MCPWM counter for
+interpolation. Live
+ConfirmedTime NAV-PVT data does not shorten that PPS holdover deadline; it
 is only used after PPS holdover expires or when no PPS-disciplined holdover
 exists.
 
@@ -356,7 +365,7 @@ pio run -e esp32dev_ota -t upload --upload-port 192.168.10.90
 - [lib/WiFiSetupPortal/WiFiSetupPortal.cpp](lib/WiFiSetupPortal/WiFiSetupPortal.cpp): portal, credential storage, dashboard pages
 
 Prometheus/VictoriaMetrics can scrape `GET /metrics`. It exposes `cpu_temp`,
-the latest measured `mcpwm_frequncy`, and `clock_state` (PPS=1, holdover=2, confirmed=3,
+the latest valid measured `mcpwm_frequncy`, and `clock_state` (PPS=1, holdover=2, confirmed=3,
 untrusted=4). `PPM` is emitted only after the STILL reference has been
 running for at least one hour and is the average `STILL − HOLDOVER` PPM error.
 Metrics can be enabled or disabled from the `Enable metrics` checkbox in

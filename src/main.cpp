@@ -49,8 +49,6 @@ constexpr const char* CALIBRATION_MAP_KEY = "map";
 constexpr const char* CALIBRATION_DYNAMIC_KEY = "dynamic";
 constexpr const char* CALIBRATION_THRESHOLD_KEY = "threshold";
 constexpr uint8_t PPS_CALCULATED_PPM_AVERAGE_SAMPLES = 30;
-constexpr uint64_t PPS_PPM_MIN_PERIOD_MICROS = 900000ULL;
-constexpr uint64_t PPS_PPM_MAX_PERIOD_MICROS = 1100000ULL;
 constexpr uint64_t PPM_MIN_ELAPSED_MICROS = 3600ULL * 1000000ULL;
 
 WiFiSetupPortal wifiPortal;
@@ -500,20 +498,24 @@ void processPpsCapture() {
     return;
   }
 
-  gps.onPpsEdge(pulse.edgeTicks, pulse.elapsedPulses);
-  uint64_t ppsEpochUtcMicros = 0;
-  if (gps.currentUtcEpochNsPps(ppsEpochUtcMicros)) {
-    anchorStillUtcEpochOnFirstPps(ppsEpochUtcMicros / 1000ULL);
+  // The first edge is needed to establish the initial PPS/TIM-TP anchor.
+  // Every subsequent edge must have a single, approximately one-second
+  // interval before it is allowed to discipline the GNSS clock.
+  const bool firstPpsEdge = pulse.pulseCount == 1;
+  const bool ppsPeriodValid = PpsCapture::isValidPpsPeriod(pulse);
+  const bool acceptedPpsEdge = firstPpsEdge || ppsPeriodValid;
+  if (acceptedPpsEdge) {
+    gps.onPpsEdge(pulse.edgeTicks, pulse.elapsedPulses);
+    uint64_t ppsEpochUtcMicros = 0;
+    if (gps.currentUtcEpochNsPps(ppsEpochUtcMicros)) {
+      anchorStillUtcEpochOnFirstPps(ppsEpochUtcMicros / 1000ULL);
+    }
+    if (gps.ppsRecentlySeen()) {
+      lastPpsSeenMs = millis();
+      lastPpsSeenMsValid = true;
+    }
   }
-  if (gps.ppsRecentlySeen()) {
-    lastPpsSeenMs = millis();
-    lastPpsSeenMsValid = true;
-  }
-  const bool ppsPpmSampleValid =
-      pulse.elapsedPulses == 1 &&
-      pulse.periodMicros >= PPS_PPM_MIN_PERIOD_MICROS &&
-      pulse.periodMicros <= PPS_PPM_MAX_PERIOD_MICROS &&
-      ppsCapture.ticksPerSecond() > 0;
+  const bool ppsPpmSampleValid = ppsPeriodValid && ppsCapture.ticksPerSecond() > 0;
   if (ppsPpmSampleValid) {
     if (dynamicCalibrationEnabled &&
         generatedCalibratedFqMap.updateFromPps(
