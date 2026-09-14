@@ -1344,19 +1344,19 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
     page += F(" checked");
   }
   page += F("><span><strong>Enable metrics</strong><span>Expose Prometheus metrics at /metrics.</span></span></label>"
-            "<label class=\"setting\"><span><strong>kHoldoverTimeoutMs</strong><span>Maximum PPS-disciplined holdover duration.</span></span>"
+            "<label class=\"setting\"><span><strong>HoldoverTimeout</strong><span>Maximum PPS-disciplined holdover duration.</span></span>"
             "<span class=\"setting-control\"><input type=\"number\" name=\"kHoldoverTimeoutMs\" min=\"1\" max=\"71582\" maxlength=\"5\" oninput=\"this.value=this.value.slice(0,5)\" step=\"1\" value=\"");
   page += htmlEscape(String(settings.kHoldoverTimeoutMs / 60000UL));
   page += F("\"><span class=\"unit\">min</span></span></label>"
-            "<label class=\"setting\"><span><strong>kConfirmedTimeHoldoverTimeoutMs</strong><span>ConfirmedTime holdover duration.</span></span>"
+            "<label class=\"setting\"><span><strong>ConfirmedTimeHoldoverTimeout</strong><span>ConfirmedTime holdover duration.</span></span>"
             "<span class=\"setting-control\"><input type=\"number\" name=\"kConfirmedTimeHoldoverTimeoutMs\" min=\"1\" max=\"71582\" maxlength=\"5\" oninput=\"this.value=this.value.slice(0,5)\" step=\"1\" value=\"");
   page += htmlEscape(String(settings.kConfirmedTimeHoldoverTimeoutMs / 60000UL));
   page += F("\"><span class=\"unit\">min</span></span></label>"
-            "<label class=\"setting\"><span><strong>kMaxConfirmedTimeCorrectionDeltaMs</strong><span>Correction is skipped at or below this delta.</span></span>"
+            "<label class=\"setting\"><span><strong>MaxConfirmedTimeCorrectionDelta</strong><span>Correction is skipped at or below this delta.</span></span>"
             "<span class=\"setting-control\"><input type=\"number\" name=\"kMaxConfirmedTimeCorrectionDeltaMs\" min=\"0\" max=\"99999\" maxlength=\"5\" oninput=\"this.value=this.value.slice(0,5)\" step=\"1\" value=\"");
   page += htmlEscape(String(settings.kMaxConfirmedTimeCorrectionDeltaMs));
   page += F("\"><span class=\"unit\">ms</span></span></label>"
-            "<label class=\"setting\"><span><strong>kMaxConfirmedTimeCorrectionIgnoreDeltaMs</strong><span>Correction is ignored at or above this delta.</span></span>"
+            "<label class=\"setting\"><span><strong>MaxConfirmedTimeCorrectionIgnoreDelta</strong><span>Correction is ignored at or above this delta.</span></span>"
             "<span class=\"setting-control\"><input type=\"number\" name=\"kMaxConfirmedTimeCorrectionIgnoreDeltaMs\" min=\"1\" max=\"99999\" maxlength=\"5\" oninput=\"this.value=this.value.slice(0,5)\" step=\"1\" value=\"");
   page += htmlEscape(String(settings.kMaxConfirmedTimeCorrectionIgnoreDeltaMs));
   page += F("\"><span class=\"unit\">ms</span></span></label>"

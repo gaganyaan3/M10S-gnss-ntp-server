@@ -711,9 +711,14 @@ void setup() {
       []() { return generatedCalibratedFqMap.serialize(); },
       []() { return savedCalibratedFqMapText; },
       []() {
-        return String(F("CpuTemp: ")) +
-               String(sysHealth.internalTemperatureC(), 1) + F(", Fq=") +
-               String(ppsCapture.ticksPerSecond());
+        String status = String(F("CpuTemp: ")) +
+                        String(sysHealth.internalTemperatureC(), 1) + F(", Fq=");
+        if (ppsCapture.lastPeriodValid()) {
+          status += String(ppsCapture.lastMeasuredFrequencyHz());
+        } else {
+          status += F("--");
+        }
+        return status;
       },
       saveCalibratedFqMap);
   wifiPortal.setDynamicCalibrationCallbacks(
