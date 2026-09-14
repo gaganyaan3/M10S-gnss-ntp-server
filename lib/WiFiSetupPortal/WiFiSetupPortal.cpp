@@ -1225,6 +1225,7 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
                   ".header-row{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}"
                   "h1{font-size:28px;margin-bottom:8px}"
                   "h2{font-size:18px;margin-bottom:14px}"
+                  ".card-subtitle{font-size:12px;font-weight:500;color:rgba(255,255,255,0.62);white-space:nowrap}"
                   "p.lead{color:rgba(255,255,255,0.72)}"
                   ".metrics{font-size:11px;line-height:1.5;text-align:right;color:rgba(255,255,255,0.82);letter-spacing:.06em;"
                     "text-transform:uppercase;padding-top:4px}"
@@ -1293,11 +1294,6 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
   page += htmlEscape(holdoverUtcEpoch);
   page += F("</span></div><div class=\"item\"><span class=\"label\">NTP Ready</span><span class=\"value\">");
   page += status.ntpReady ? F("Yes") : F("No");
-  page += F("</span></div>"
-            "<div class=\"item\"><span class=\"label\">CORRECTION Since Boot</span><span class=\"value\">");
-  page += htmlEscape(String(status.correctionUseCount));
-  page += F("</span></div><div class=\"item\"><span class=\"label\">Last Correction <span class=\"unit\">(µs)</span></span><span class=\"value\">");
-  page += htmlEscape(String(status.correctionUs));
   page += F("</span></div><div class=\"item\"><span class=\"label\">ANTStatus-agcCnt</span><span class=\"value\">");
   page += htmlEscape(monRfAgcStatusLabel(status));
   page += F("</span></div>");
@@ -1510,6 +1506,11 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
   page += htmlEscape(holdoverStillPpm);
   page += F("</span></div><div class=\"item\"><span class=\"label\">PPS_calculated_PPM(30s)</span><span class=\"value\">");
   page += htmlEscape(ppsCalculatedPpm);
+  page += F("</span></div></div></div><div class=\"card\"><h2>Coarse Correction <span class=\"card-subtitle\">(Only in ConfirmedTime)</span></h2><div class=\"grid\">");
+  page += F("<div class=\"item\"><span class=\"label\">CORRECTION Since Boot</span><span class=\"value\">");
+  page += htmlEscape(String(status.correctionUseCount));
+  page += F("</span></div><div class=\"item\"><span class=\"label\">Last Correction <span class=\"unit\">(µs)</span></span><span class=\"value\">");
+  page += htmlEscape(String(status.correctionUs));
   page += F("</span></div></div></div><div class=\"card\"><h2>UBX-NAV-PVT</h2><div class=\"grid\">");
   page += F("<div class=\"item\"><span class=\"label\">Latitude</span><span class=\"value secret-value\" tabindex=\"0\" role=\"button\" data-value=\"");
   page += htmlEscape(latitudeText);
