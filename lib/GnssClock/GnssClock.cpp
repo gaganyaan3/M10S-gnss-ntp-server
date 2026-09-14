@@ -53,13 +53,20 @@ bool GnssClock::navPvtConfirmedTimeEpochUs(uint64_t& epochUsUtcOut, uint32_t* re
 
 bool GnssClock::currentPpsLockedEpochUs(uint64_t& epochUsUtcOut) {
   uint64_t epochNsUtc = 0;
-  if (gps_.currentUtcEpochNsPps(epochNsUtc) && gps_.ppsRecentlySeen()) {
-    epochUsUtcOut = epochNsUtc / 1000ULL;
+  if (!currentPpsLockedEpochNs(epochNsUtc)) {
+    return false;
+  }
+  epochUsUtcOut = epochNsUtc / 1000ULL;
+  return true;
+}
+
+bool GnssClock::currentPpsLockedEpochNs(uint64_t& epochNsUtcOut) {
+  if (gps_.currentUtcEpochNsPps(epochNsUtcOut) && gps_.ppsRecentlySeen()) {
     refreshHoldoverTimeout(kHoldoverTimeoutMs_);
     holdoverNavPvtTimeoutStarted_ = false;
     holdoverPpsDisciplined_ = true;
     holdoverNavPvtReceivedUsValid_ = false;
-    anchorHoldoverUs(epochUsUtcOut);
+    anchorHoldoverRawNs(epochNsUtcOut);
     return true;
   }
 
@@ -67,7 +74,16 @@ bool GnssClock::currentPpsLockedEpochUs(uint64_t& epochUsUtcOut) {
 }
 
 bool GnssClock::currentNtpEpochUs(uint64_t& epochUsUtcOut) {
-  if (currentPpsLockedEpochUs(epochUsUtcOut)) {
+  uint64_t epochNsUtc = 0;
+  if (!currentNtpEpochNs(epochNsUtc)) {
+    return false;
+  }
+  epochUsUtcOut = epochNsUtc / 1000ULL;
+  return true;
+}
+
+bool GnssClock::currentNtpEpochNs(uint64_t& epochNsUtcOut) {
+  if (currentPpsLockedEpochNs(epochNsUtcOut)) {
     return true;
   }
 
@@ -78,23 +94,23 @@ bool GnssClock::currentNtpEpochUs(uint64_t& epochUsUtcOut) {
   const char* navPvtFallbackLabel = "ConfirmedTime";
 
   if (confirmedTimeEpochValid && holdoverValid_) {
-    uint64_t holdoverEpochUsUtc = 0;
-    if (!currentHoldoverUs(holdoverEpochUsUtc)) {
+    uint64_t holdoverEpochNsUtc = 0;
+    if (!currentHoldoverNs(holdoverEpochNsUtc)) {
       return false;
     }
 
     if (holdoverPpsDisciplined_) {
       uint32_t remainingSeconds = 0;
       if (holdoverRemainingSeconds(remainingSeconds)) {
-        epochUsUtcOut = holdoverEpochUsUtc;
+        epochNsUtcOut = holdoverEpochNsUtc;
         return true;
       }
       holdoverPpsDisciplined_ = false;
     }
 
     if (!holdoverPpsDisciplined_ && !holdoverNavPvtTimeoutStarted_) {
-      epochUsUtcOut = confirmedTimeEpochUsUtc;
-      anchorHoldoverUs(epochUsUtcOut);
+      epochNsUtcOut = confirmedTimeEpochUsUtc * 1000ULL;
+      anchorHoldoverNs(epochNsUtcOut);
       startNavPvtHoldoverTimeout(kConfirmedTimeHoldoverTimeoutMs_);
       holdoverNavPvtReceivedUs_ = confirmedTimeReceivedUs;
       holdoverNavPvtReceivedUsValid_ = true;
@@ -107,25 +123,32 @@ bool GnssClock::currentNtpEpochUs(uint64_t& epochUsUtcOut) {
 
     uint32_t remainingSeconds = 0;
     if (holdoverRemainingSeconds(remainingSeconds)) {
-      epochUsUtcOut = holdoverEpochUsUtc;
+      epochNsUtcOut = holdoverEpochNsUtc;
       return true;
     }
 
-    epochUsUtcOut = holdoverEpochUsUtc;
-    if (updateCorrection(holdoverEpochUsUtc,
+    uint64_t correctedEpochUsUtc = holdoverEpochNsUtc / 1000ULL;
+    const uint32_t correctionCountBefore = correctionUseCount_;
+    if (updateCorrection(correctedEpochUsUtc,
                          confirmedTimeEpochUsUtc,
                          navPvtFallbackLabel,
-                         epochUsUtcOut)) {
+                         correctedEpochUsUtc)) {
+      // Preserve the sub-microsecond holdover value when the NAV-PVT sample
+      // only causes a skipped/ignored correction.
+      epochNsUtcOut = correctionUseCount_ == correctionCountBefore
+                          ? holdoverEpochNsUtc
+                          : correctedEpochUsUtc * 1000ULL;
       restartNavPvtHoldoverTimeout(kConfirmedTimeHoldoverTimeoutMs_);
       return true;
     }
 
+    epochNsUtcOut = holdoverEpochNsUtc;
     return true;
   }
 
   if (confirmedTimeEpochValid) {
-    epochUsUtcOut = confirmedTimeEpochUsUtc;
-    anchorHoldoverUs(epochUsUtcOut);
+    epochNsUtcOut = confirmedTimeEpochUsUtc * 1000ULL;
+    anchorHoldoverNs(epochNsUtcOut);
     startNavPvtHoldoverTimeout(kConfirmedTimeHoldoverTimeoutMs_);
     holdoverPpsDisciplined_ = false;
     holdoverNavPvtReceivedUs_ = confirmedTimeReceivedUs;
@@ -141,7 +164,7 @@ bool GnssClock::currentNtpEpochUs(uint64_t& epochUsUtcOut) {
       holdoverNavPvtReceivedUsValid_ = false;
       return false;
     }
-    return currentHoldoverUs(epochUsUtcOut);
+    return currentHoldoverNs(epochNsUtcOut);
   }
 
   return false;
@@ -157,12 +180,21 @@ bool GnssClock::currentNtpEpochMs(uint64_t& epochMsUtcOut) {
 }
 
 bool GnssClock::currentHoldoverUs(uint64_t& epochUsUtcOut) {
+  uint64_t epochNsUtc = 0;
+  if (!currentHoldoverNs(epochNsUtc)) {
+    return false;
+  }
+  epochUsUtcOut = epochNsUtc / 1000ULL;
+  return true;
+}
+
+bool GnssClock::currentHoldoverNs(uint64_t& epochNsUtcOut) {
   if (!holdoverValid_) {
     return false;
   }
 
   const uint64_t elapsedTicks = ppsCapture_.nowTicks64() - holdoverBaseTicks_;
-  epochUsUtcOut = holdoverBaseEpochUsUtc_ + ppsTicksToUs(elapsedTicks);
+  epochNsUtcOut = holdoverBaseEpochNsUtc_ + ppsTicksToNs(elapsedTicks);
   return true;
 }
 
@@ -220,16 +252,25 @@ GpsClockState GnssClock::clockState(const GpsDashboardStatus& status) const {
   return GPS_CLOCK_STATE_UNSYNCED;
 }
 
-uint64_t GnssClock::ppsTicksToUs(uint64_t ticks) const {
+uint64_t GnssClock::ppsTicksToNs(uint64_t ticks) const {
   const uint32_t ticksPerSecond = ppsCapture_.ticksPerSecond();
-  return (ticks / ticksPerSecond) * 1000000ULL +
-         ((ticks % ticksPerSecond) * 1000000ULL) / ticksPerSecond;
+  return (ticks / ticksPerSecond) * 1000000000ULL +
+         ((ticks % ticksPerSecond) * 1000000000ULL) / ticksPerSecond;
 }
 
-void GnssClock::anchorHoldoverRawUs(uint64_t epochUsUtc) {
+void GnssClock::anchorHoldoverRawNs(uint64_t epochNsUtc) {
   holdoverValid_ = true;
-  holdoverBaseEpochUsUtc_ = epochUsUtc;
+  holdoverBaseEpochNsUtc_ = epochNsUtc;
   holdoverBaseTicks_ = ppsCapture_.nowTicks64();
+}
+
+void GnssClock::anchorHoldoverNs(uint64_t epochNsUtc) {
+  const int64_t correctedEpochNs =
+      static_cast<int64_t>(epochNsUtc) + holdoverCorrectionOffsetUs_ * 1000LL;
+  if (correctedEpochNs <= 0) {
+    return;
+  }
+  anchorHoldoverRawNs(static_cast<uint64_t>(correctedEpochNs));
 }
 
 void GnssClock::anchorHoldoverUs(uint64_t epochUsUtc) {
@@ -238,7 +279,7 @@ void GnssClock::anchorHoldoverUs(uint64_t epochUsUtc) {
   if (correctedEpochUs <= 0) {
     return;
   }
-  anchorHoldoverRawUs(static_cast<uint64_t>(correctedEpochUs));
+  anchorHoldoverNs(static_cast<uint64_t>(correctedEpochUs) * 1000ULL);
 }
 
 void GnssClock::refreshHoldoverTimeout(uint32_t timeoutMs) {
@@ -286,21 +327,22 @@ bool GnssClock::updateCorrection(uint64_t referenceEpochUsUtc,
   const int64_t correctionSubMsUs = abs64(correctionUs) % 1000LL;
   correctionLastAppliedUs_ = correctionUs;
 
-  uint64_t currentHoldoverUsValue = 0;
-  if (!currentHoldoverUs(currentHoldoverUsValue)) {
+  uint64_t currentHoldoverNsValue = 0;
+  if (!currentHoldoverNs(currentHoldoverNsValue)) {
     return false;
   }
 
-  const int64_t correctedHoldoverUs =
-      static_cast<int64_t>(currentHoldoverUsValue) + correctionUs;
-  if (correctedHoldoverUs <= 0) {
+  const int64_t correctedHoldoverNs =
+      static_cast<int64_t>(currentHoldoverNsValue) +
+      static_cast<int64_t>(correctionUs) * 1000LL;
+  if (correctedHoldoverNs <= 0) {
     return false;
   }
 
   holdoverCorrectionOffsetUs_ += correctionUs;
-  epochUsUtcInOut = static_cast<uint64_t>(correctedHoldoverUs);
+  epochUsUtcInOut = static_cast<uint64_t>(correctedHoldoverNs / 1000LL);
   ++correctionUseCount_;
-  anchorHoldoverRawUs(static_cast<uint64_t>(correctedHoldoverUs));
+  anchorHoldoverRawNs(static_cast<uint64_t>(correctedHoldoverNs));
   Serial.printf("%s correction applied | deltaMs=%lld correction=%s%ld.%03lldms \r\n",
                 sourceLabel,
                 static_cast<long long>(deltaMs),

@@ -77,9 +77,17 @@ The next PPS edge corresponds to UTC time N, plus valid qErr correction.
 
 Once that relationship is known, the PPS edge captured by MCPWM becomes the
 precision timing source. Between PPS edges, the server interpolates from the
-captured PPS tick using the same 80 MHz hardware counter. ConfirmedTime is the
-NAV-PVT fallback when NAV-PVT has validDate, validTime, fullyResolved, and
-confirmedTime.
+captured PPS tick using the same 80 MHz hardware counter. The interpolation is
+kept at nanosecond resolution through the holdover and NTP paths. ConfirmedTime
+is the NAV-PVT fallback when NAV-PVT has validDate, validTime, fullyResolved,
+and confirmedTime.
+
+The MCPWM counter provides 12.5 ns tick resolution at 80 MHz. NTP timestamps
+preserve the resulting nanosecond value in the NTP fractional-seconds field.
+This describes timestamp resolution, not guaranteed UTC accuracy: holdover
+accuracy is limited by MCPWM frequency/temperature drift, PPS jitter, GNSS
+timing, and network delay and asymmetry. The dashboard's legacy epoch and
+diagnostic fields remain displayed in microseconds.
 
 If PPS disappears, the server does not immediately switch to setting time from
 each NAV-PVT message. Holdover continues from the PPS-disciplined timestamp. In
@@ -107,6 +115,11 @@ New time-query API added to `GnssMaxM10S`:
 ConfirmedTime source used for NTP when NAV-PVT has validDate, validTime,
 fullyResolved, and confirmedTime.
 
+`GnssClock::currentHoldoverNs(uint64_t&)` and
+`GnssClock::currentNtpEpochNs(uint64_t&)` expose nanosecond-resolution
+holdover and NTP epochs. The microsecond APIs remain available as compatibility
+wrappers.
+
 NTP source priority is PPSAnchored with PPS first, then ConfirmedTime, then valid
 holdover.
 
@@ -122,7 +135,9 @@ continues to move from the latest confirmed GNSS UTC.
 
 ## PPS pulse:
 
-- So i don't have to rely on NAV-PVT once i start getting PPS signal and MCPWM gives 12.5ns accurach at 80mhz
+- Once PPS is locked, MCPWM provides 12.5 ns tick resolution at 80 MHz for
+  interpolation between PPS edges; this is resolution, not guaranteed 12.5 ns
+  UTC accuracy.
 
 ```
 NAV-PVT: "The time is around 12:00:00.555..."

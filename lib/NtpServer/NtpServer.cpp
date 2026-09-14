@@ -45,7 +45,7 @@ void NtpServer::poll() {
   response[0] = static_cast<uint8_t>((effectiveVersion << 3) | 0x04);  // LI=0, VN=client's, Mode=4 (server)
   response[1] = 1;     // Stratum 1: primary reference clock (GNSS)
   response[2] = 6;     // Poll interval: ~2^6 = 64s
-  response[3] = 0xEC;  // Precision: 2^-20s (~1us), typical for a GNSS-disciplined clock
+  response[3] = 0xE2;  // Precision: 2^-30s (~1ns) timestamp quantization
 
   // Root Delay and Root Dispersion left at 0.
 

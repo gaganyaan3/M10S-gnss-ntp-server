@@ -27,9 +27,12 @@ class GnssClock {
   bool navPvtConfirmedTimeEpochUs(uint64_t& epochUsUtcOut, uint32_t* receivedUsOut = nullptr);
   bool navPvtCoarseEpochUs(uint64_t& epochUsUtcOut, uint32_t* receivedUsOut = nullptr);
   bool currentPpsLockedEpochUs(uint64_t& epochUsUtcOut);
+  bool currentPpsLockedEpochNs(uint64_t& epochNsUtcOut);
   bool currentNtpEpochUs(uint64_t& epochUsUtcOut);
+  bool currentNtpEpochNs(uint64_t& epochNsUtcOut);
   bool currentNtpEpochMs(uint64_t& epochMsUtcOut);
   bool currentHoldoverUs(uint64_t& epochUsUtcOut);
+  bool currentHoldoverNs(uint64_t& epochNsUtcOut);
   bool holdoverRemainingSeconds(uint32_t& remainingSecondsOut);
   GnssClockDiagnostics diagnostics();
   GpsClockState clockState(const GpsDashboardStatus& status) const;
@@ -40,8 +43,9 @@ class GnssClock {
   static constexpr uint32_t DEFAULT_MAX_CONFIRMED_TIME_CORRECTION_DELTA_MS = 10UL;
   static constexpr uint32_t DEFAULT_MAX_CONFIRMED_TIME_CORRECTION_IGNORE_DELTA_MS = 100UL;
 
-  uint64_t ppsTicksToUs(uint64_t ticks) const;
-  void anchorHoldoverRawUs(uint64_t epochUsUtc);
+  uint64_t ppsTicksToNs(uint64_t ticks) const;
+  void anchorHoldoverRawNs(uint64_t epochNsUtc);
+  void anchorHoldoverNs(uint64_t epochNsUtc);
   void anchorHoldoverUs(uint64_t epochUsUtc);
   void refreshHoldoverTimeout(uint32_t timeoutMs);
   void startNavPvtHoldoverTimeout(uint32_t timeoutMs);
@@ -62,7 +66,7 @@ class GnssClock {
   uint32_t holdoverNavPvtReceivedUs_ = 0;
   bool holdoverNavPvtReceivedUsValid_ = false;
   int64_t holdoverCorrectionOffsetUs_ = 0;
-  uint64_t holdoverBaseEpochUsUtc_ = 0;
+  uint64_t holdoverBaseEpochNsUtc_ = 0;
   uint64_t holdoverBaseTicks_ = 0;
   bool holdoverDeadlineValid_ = false;
   bool holdoverNavPvtTimeoutStarted_ = false;

@@ -741,13 +741,14 @@ void setup() {
   Serial.printf("Setup hotspot SSID (if needed): %s\r\n", apSsid);
 
   ntpServer.setTimeProvider([](uint32_t& epochUtcOut, uint32_t& fractionOut) {
-    uint64_t epochUsUtcOut = 0;
-    if (!gnssClock.currentNtpEpochUs(epochUsUtcOut)) {
+    uint64_t epochNsUtcOut = 0;
+    if (!gnssClock.currentNtpEpochNs(epochNsUtcOut)) {
       return false;
     }
 
-    epochUtcOut = static_cast<uint32_t>(epochUsUtcOut / 1000000ULL);
-    fractionOut = static_cast<uint32_t>((epochUsUtcOut % 1000000ULL) * 4294967296ULL / 1000000ULL);
+    epochUtcOut = static_cast<uint32_t>(epochNsUtcOut / 1000000000ULL);
+    fractionOut = static_cast<uint32_t>(
+        (epochNsUtcOut % 1000000000ULL) * 4294967296ULL / 1000000000ULL);
     return true;
   });
   ntpServer.begin();
