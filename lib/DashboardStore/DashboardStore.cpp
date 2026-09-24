@@ -98,6 +98,7 @@ bool DashboardStore::saveSettings(const GpsDashboardSettings& settings) {
 
 void DashboardStore::applyDefaultSettings(GpsDashboardSettings& settingsOut) {
   settingsOut.rawLoggingEnabled = false;
+  settingsOut.displayEnabled = true;
   settingsOut.metricsEnabled = true;
   settingsOut.kHoldoverTimeoutMs = 1440UL * 60UL * 1000UL;
   settingsOut.kConfirmedTimeHoldoverTimeoutMs = 60UL * 1000UL;
