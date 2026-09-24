@@ -13,11 +13,18 @@ class NtpServer {
   // Returns true and sets epochUtcOut/fractionOut when a current UTC time is available.
   using TimeProvider = std::function<bool(uint32_t& epochUtcOut, uint32_t& fractionOut)>;
 
+  struct Status {
+    uint32_t packetsReceived = 0;
+    uint32_t validRequests = 0;
+    uint32_t repliesAttempted = 0;
+  };
+
   explicit NtpServer(uint16_t port = DEFAULT_PORT);
 
   void begin();
   void poll();
   void setTimeProvider(TimeProvider provider);
+  Status status() const { return status_; }
 
  private:
   static constexpr size_t NTP_PACKET_SIZE = 48;
@@ -28,4 +35,11 @@ class NtpServer {
   WiFiUDP udp_;
   uint16_t port_;
   TimeProvider timeProvider_;
+  Status status_;
+  bool socketReady_ = false;
+  uint32_t lastSocketCheckMs_ = 0;
+  bool hasSocketCheck_ = false;
+
+  void maintainSocket(uint32_t nowMs);
+  void invalidateSocket();
 };

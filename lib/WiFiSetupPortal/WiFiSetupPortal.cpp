@@ -197,7 +197,7 @@ String formatEpochMicros(uint64_t epochUtcMicros) {
   char buffer[32];
   snprintf(buffer,
            sizeof(buffer),
-           "%llu,%06llu",
+           "%llu.%06llu",
            static_cast<unsigned long long>(epochUtcMicros / 1000000ULL),
            static_cast<unsigned long long>(epochUtcMicros % 1000000ULL));
   return String(buffer);
@@ -841,6 +841,12 @@ void WiFiSetupPortal::handleMetrics() {
   metrics += String(status.internalTemperatureC, 2);
   metrics += '\n';
 
+  metrics += F("# HELP ntp_packets_received Total NTP packets received since boot.\n");
+  metrics += F("# TYPE ntp_packets_received gauge\n");
+  metrics += F("ntp_packets_received ");
+  metrics += String(status.ntpPacketsReceived);
+  metrics += '\n';
+
   if (status.mcpwmFrequencyValid) {
     metrics += F("# HELP mcpwm_frequncy Latest measured MCPWM PPS clock frequency in hertz.\n");
     metrics += F("# TYPE mcpwm_frequncy gauge\n");
@@ -1234,7 +1240,7 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
                   ".grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}"
                   ".item{background:rgba(255,255,255,0.05);border-radius:12px;padding:14px}"
                   ".label{display:block;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,0.56);margin-bottom:6px}"
-                  ".label .unit{text-transform:none}"
+                  ".label .unit-milliseconds{text-transform:none;letter-spacing:normal}"
                   ".value{font-size:18px;font-weight:700;word-break:break-word}"
                   ".state-value{font-size:28px;font-weight:800;letter-spacing:0}"
                   ".state-detail{margin-top:6px;color:rgba(255,255,255,0.72);font-size:14px;line-height:1.4}"
@@ -1288,9 +1294,9 @@ String WiFiSetupPortal::gpsDashboardPage(const GpsDashboardSettings& settings,
   if (gpsEpochSeconds.isEmpty()) {
     page += F("Unavailable");
   }
-  page += F("</span></div><div class=\"item\"><span class=\"label\">GNSS UTC Epoch <span class=\"unit\">(µs)</span></span><span class=\"value\">");
+  page += F("</span></div><div class=\"item\"><span class=\"label\">GNSS UTC Epoch</span><span class=\"value\">");
   page += htmlEscape(gpsUtcEpoch);
-  page += F("</span></div><div class=\"item\"><span class=\"label\">Holdover UTC <span class=\"unit\">(µs)</span></span><span class=\"value\">");
+  page += F("</span></div><div class=\"item\"><span class=\"label\">Holdover UTC</span><span class=\"value\">");
   page += htmlEscape(holdoverUtcEpoch);
   page += F("</span></div><div class=\"item\"><span class=\"label\">NTP Ready</span><span class=\"value\">");
   page += status.ntpReady ? F("Yes") : F("No");
@@ -1506,11 +1512,20 @@ String WiFiSetupPortal::statsPage(const GpsDashboardStatus& status) const {
   page += htmlEscape(holdoverStillPpm);
   page += F("</span></div><div class=\"item\"><span class=\"label\">PPS_calculated_PPM(30s)</span><span class=\"value\">");
   page += htmlEscape(ppsCalculatedPpm);
-  page += F("</span></div></div></div><div class=\"card\"><h2>Coarse Correction <span class=\"card-subtitle\">(Only in ConfirmedTime)</span></h2><div class=\"grid\">");
+  page += F("</span></div></div></div>");
+  page += F("<div class=\"card\"><h2>NTP Status</h2><div class=\"grid\">");
+  page += F("<div class=\"item\"><span class=\"label\">NTP Packets Received</span><span class=\"value\">");
+  page += htmlEscape(String(status.ntpPacketsReceived));
+  page += F("</span></div><div class=\"item\"><span class=\"label\">NTP Valid Requests</span><span class=\"value\">");
+  page += htmlEscape(String(status.ntpValidRequests));
+  page += F("</span></div><div class=\"item\"><span class=\"label\">NTP Replies Attempted</span><span class=\"value\">");
+  page += htmlEscape(String(status.ntpRepliesAttempted));
+  page += F("</span></div></div></div>");
+  page += F("<div class=\"card\"><h2>Coarse Correction <span class=\"card-subtitle\">(Only in ConfirmedTime)</span></h2><div class=\"grid\">");
   page += F("<div class=\"item\"><span class=\"label\">CORRECTION Since Boot</span><span class=\"value\">");
   page += htmlEscape(String(status.correctionUseCount));
-  page += F("</span></div><div class=\"item\"><span class=\"label\">Last Correction <span class=\"unit\">(µs)</span></span><span class=\"value\">");
-  page += htmlEscape(String(status.correctionUs));
+  page += F("</span></div><div class=\"item\"><span class=\"label\">Last Correction <span class=\"unit-milliseconds\">(ms)</span></span><span class=\"value\">");
+  page += htmlEscape(String(static_cast<double>(status.correctionUs) / 1000.0, 3));
   page += F("</span></div></div></div><div class=\"card\"><h2>UBX-NAV-PVT</h2><div class=\"grid\">");
   page += F("<div class=\"item\"><span class=\"label\">Latitude</span><span class=\"value secret-value\" tabindex=\"0\" role=\"button\" data-value=\"");
   page += htmlEscape(latitudeText);

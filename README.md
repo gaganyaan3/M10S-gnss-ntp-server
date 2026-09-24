@@ -50,6 +50,10 @@ or use OpenCPN with `tcp://<device-ip>:10110`.
 
 ### GNSS-Backed NTP Server
 The device serves NTP on UDP port **123** using GNSS time as a stratum-1 source.
+It reads the standard 48-byte NTP header and discards any remaining datagram
+bytes. This is necessary with ESP32 `WiFiUDP`: unread bytes can keep the current
+datagram buffered and prevent subsequent requests from being parsed. Extension
+or authentication data beyond the standard header is ignored.
 
 Quick check:
 
@@ -365,6 +369,7 @@ pio run -e esp32dev_ota -t upload --upload-port 192.168.10.90
 - [lib/WiFiSetupPortal/WiFiSetupPortal.cpp](lib/WiFiSetupPortal/WiFiSetupPortal.cpp): portal, credential storage, dashboard pages
 
 Prometheus/VictoriaMetrics can scrape `GET /metrics`. It exposes `cpu_temp`,
+`ntp_packets_received` (the NTP Status card's NTP Packets Received value),
 the latest valid measured `mcpwm_frequncy`, and `clock_state` (PPS=1, holdover=2, confirmed=3,
 untrusted=4). `PPM` is emitted only after the STILL reference has been
 running for at least one hour and is the average `STILL − HOLDOVER` PPM error.

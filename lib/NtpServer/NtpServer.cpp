@@ -1,11 +1,13 @@
 #include "NtpServer.h"
 
+#include <WiFi.h>
 #include <string.h>
 
 NtpServer::NtpServer(uint16_t port) : port_(port) {}
 
 void NtpServer::begin() {
-  udp_.begin(port_);
+  hasSocketCheck_ = false;
+  maintainSocket(millis());
 }
 
 void NtpServer::setTimeProvider(TimeProvider provider) {
@@ -13,17 +15,37 @@ void NtpServer::setTimeProvider(TimeProvider provider) {
 }
 
 void NtpServer::poll() {
+  maintainSocket(millis());
+  if (!socketReady_) {
+    return;
+  }
+
   const int packetSize = udp_.parsePacket();
   if (packetSize <= 0) {
     return;
   }
+  ++status_.packetsReceived;
   if (packetSize < static_cast<int>(NTP_PACKET_SIZE)) {
     udp_.flush();
     return;
   }
 
   uint8_t requestBuffer[NTP_PACKET_SIZE];
-  udp_.read(requestBuffer, NTP_PACKET_SIZE);
+  const int bytesRead = udp_.read(requestBuffer, NTP_PACKET_SIZE);
+  // ESP32 WiFiUDP keeps the current datagram buffered until all bytes are
+  // consumed. Discard any extension/authentication bytes so a >48-byte packet
+  // cannot block parsePacket() from delivering the next request.
+  udp_.flush();
+  if (bytesRead != static_cast<int>(NTP_PACKET_SIZE)) {
+    return;
+  }
+
+  const uint8_t requestVersion = (requestBuffer[0] >> 3) & 0x07;
+  const uint8_t requestMode = requestBuffer[0] & 0x07;
+  if (requestMode != 3 || requestVersion > 4) {
+    return;
+  }
+  ++status_.validRequests;
 
   const IPAddress remoteIp = udp_.remoteIP();
   const uint16_t remotePort = udp_.remotePort();
@@ -36,7 +58,6 @@ void NtpServer::poll() {
     return;
   }
 
-  const uint8_t requestVersion = (requestBuffer[0] >> 3) & 0x07;
   const uint8_t effectiveVersion = requestVersion == 0 ? 3 : requestVersion;
 
   uint8_t response[NTP_PACKET_SIZE];
@@ -65,9 +86,43 @@ void NtpServer::poll() {
   writeTimestamp(response, 32, ntpSeconds, fraction);  // Receive Timestamp
   writeTimestamp(response, 40, ntpSeconds, fraction);  // Transmit Timestamp
 
-  udp_.beginPacket(remoteIp, remotePort);
-  udp_.write(response, NTP_PACKET_SIZE);
-  udp_.endPacket();
+  ++status_.repliesAttempted;
+  if (!udp_.beginPacket(remoteIp, remotePort)) {
+    invalidateSocket();
+    return;
+  }
+  if (udp_.write(response, NTP_PACKET_SIZE) != NTP_PACKET_SIZE || !udp_.endPacket()) {
+    invalidateSocket();
+  }
+}
+
+void NtpServer::maintainSocket(uint32_t nowMs) {
+  const bool wifiConnected = WiFi.status() == WL_CONNECTED;
+  if (!wifiConnected) {
+    if (socketReady_) {
+      udp_.stop();
+      socketReady_ = false;
+    }
+    hasSocketCheck_ = false;
+    return;
+  }
+
+  if (socketReady_) {
+    return;
+  }
+  if (hasSocketCheck_ && static_cast<uint32_t>(nowMs - lastSocketCheckMs_) < 2000UL) {
+    return;
+  }
+
+  hasSocketCheck_ = true;
+  lastSocketCheckMs_ = nowMs;
+  socketReady_ = udp_.begin(port_) != 0;
+}
+
+void NtpServer::invalidateSocket() {
+  udp_.stop();
+  socketReady_ = false;
+  hasSocketCheck_ = false;
 }
 
 void NtpServer::writeTimestamp(uint8_t* buffer, size_t offset, uint32_t seconds, uint32_t fraction) {

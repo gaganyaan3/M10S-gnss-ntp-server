@@ -67,6 +67,9 @@ struct GpsDashboardStatus {
   bool timTpTpNotLocked = false;
   bool timTpUtcEpochValid = false;
   bool ntpReady = false;
+  uint32_t ntpPacketsReceived = 0;
+  uint32_t ntpValidRequests = 0;
+  uint32_t ntpRepliesAttempted = 0;
   bool holdoverUtcValid = false;
   uint64_t holdoverEpochUtcMicros = 0;
   bool latitudeValid = false;

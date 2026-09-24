@@ -320,6 +320,10 @@ void fillGpsDashboardData(GpsDashboardSettings& settingsOut, GpsDashboardStatus&
       statusOut.navPvtConfirmedTimeReady ||
       (clockDiagnostics.holdoverUtcValid &&
        clockDiagnostics.holdoverTimeoutValid);
+  const NtpServer::Status ntpStatus = ntpServer.status();
+  statusOut.ntpPacketsReceived = ntpStatus.packetsReceived;
+  statusOut.ntpValidRequests = ntpStatus.validRequests;
+  statusOut.ntpRepliesAttempted = ntpStatus.repliesAttempted;
 
   {
     GnssMonRfData monRf;
