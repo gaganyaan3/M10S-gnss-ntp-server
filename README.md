@@ -30,6 +30,10 @@ u-blox MAX-M10S module on a SH1106 128x64 OLED and serve as NTP server.
 > PPS edge, so elapsed-time math is pure integer tick subtraction at 12.5 ns
 > resolution.
 
+![GNSS Config Dashboard](img/Main_UI.png)
+
+![NTP time synchronization output](img/time.png)
+
 ### BOOT Button (already on most ESP32 DevKit boards)
 - BOOT -> GPIO0 (active LOW)
 - Short press: toggle OLED display ON/OFF
